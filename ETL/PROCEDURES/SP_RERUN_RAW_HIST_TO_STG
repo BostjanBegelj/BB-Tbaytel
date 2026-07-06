@@ -1,0 +1,236 @@
+CREATE OR REPLACE PROCEDURE ADM.SP_RERUN_RAW_HIST_TO_STG(
+    "P_PPN_ID"    NUMBER,
+    "P_PPN_ALL"   BOOLEAN,
+    "P_TABLE"     VARCHAR,
+    "P_LOAD_TYPE" VARCHAR DEFAULT 'FULL',
+    "P_RUN_ID"    VARCHAR DEFAULT NULL,
+    "P_SOURCE_ID" VARCHAR DEFAULT NULL,
+    "P_OTHER"     VARCHAR DEFAULT NULL
+)
+RETURNS VARIANT
+LANGUAGE SQL
+COMMENT = 'Rerun utility: Redirects EX view to RAW_HIST and replays STG load logic for the selected PPNs. PPNs are processed from lowest to highest (ascending) using the SAME P_LOAD_TYPE for every PPN, so the rerun faithfully simulates the original sequence of past loads.'
+EXECUTE AS CALLER
+AS
+DECLARE
+    e_failed EXCEPTION (-20201, 'SP_RERUN_RAW_HIST_TO_STG failed.');
+
+    v_ppn_id         NUMBER DEFAULT P_PPN_ID;
+    v_table          STRING DEFAULT UPPER(NULLIF(TRIM(P_TABLE), ''));
+    v_load_type      STRING DEFAULT UPPER(COALESCE(NULLIF(TRIM(P_LOAD_TYPE), ''), 'FULL'));
+    v_other          VARIANT DEFAULT TRY_PARSE_JSON(P_OTHER);
+    v_source_id      STRING DEFAULT NULLIF(TRIM(P_SOURCE_ID), '');
+    v_run_id         STRING DEFAULT COALESCE(NULLIF(TRIM(P_RUN_ID), ''), REPLACE(UUID_STRING(), '-', ''));
+
+    v_original_ddl   STRING;
+    v_modified_ddl   STRING;
+    v_phase          STRING DEFAULT 'INIT';
+    v_started_at     TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
+    v_error_msg      STRING;
+    v_log_rows       NUMBER DEFAULT 0;
+
+    -- Counter for reporting only; the SAME v_load_type is used for every PPN.
+    v_iter           NUMBER DEFAULT 0;
+
+    v_ex_hist_result VARIANT;
+    v_stg_result     VARIANT;
+
+    -- Lowest -> highest PPN, so loads are replayed in their original order.
+    c_ppn_list CURSOR FOR 
+        SELECT PPN_ID 
+        FROM ADM.PPN 
+        WHERE ( :P_PPN_ALL = TRUE AND PPN_ID >= :v_ppn_id )
+           OR ( :P_PPN_ALL = FALSE AND PPN_ID = :v_ppn_id )
+        ORDER BY PPN_ID ASC;
+BEGIN
+    /* ============================================================
+       1. VALIDATE INPUT PARAMETERS
+       ============================================================ */
+    v_phase := 'VALIDATE';
+
+    IF (v_ppn_id IS NULL OR v_table IS NULL OR v_source_id IS NULL) THEN
+        v_error_msg := 'P_PPN_ID, P_TABLE, and P_SOURCE_ID are required.';
+        RAISE e_failed;
+    END IF;
+
+    IF (NOT REGEXP_LIKE(v_table, '^[A-Z][A-Z0-9_]*$')) THEN
+        v_error_msg := 'Invalid P_TABLE [' || v_table || '].';
+        RAISE e_failed;
+    END IF;
+
+    IF (v_load_type NOT IN ('FULL', 'INIT', 'INCR', 'PARTITION')) THEN
+        v_error_msg := 'Unsupported P_LOAD_TYPE [' || v_load_type || ']. Expected FULL, INIT, INCR or PARTITION.';
+        RAISE e_failed;
+    END IF;
+
+    IF (P_OTHER IS NOT NULL AND v_other IS NULL) THEN
+        v_error_msg := 'P_OTHER must be valid JSON when provided.';
+        RAISE e_failed;
+    END IF;
+
+    -- Fetch original DDL
+    BEGIN
+        SELECT GET_DDL('VIEW', 'EX.' || :v_table) INTO :v_original_ddl;
+    EXCEPTION WHEN OTHER THEN
+        v_error_msg := 'Could not find view EX.' || v_table || ' in current context.';
+        RAISE e_failed;
+    END;
+
+    /* ============================================================
+       2. ITERATE THROUGH PPNs (ascending, same load type for all)
+       ============================================================ */
+    FOR rec IN c_ppn_list DO
+        LET v_curr_ppn := rec.PPN_ID;
+
+        v_iter := v_iter + 1;
+
+        CALL ADM.SP_WRITE_PPN_LOG(
+            PPN_ID             => :v_curr_ppn,
+            SOURCE_ID          => :v_source_id,
+            PPN_PHASE          => 'RERUN FOR PPN_ID=' || :v_curr_ppn || ' START',
+            LOG_START          => CURRENT_TIMESTAMP(),
+            LOG_END            => CURRENT_TIMESTAMP(),
+            DURATION_MSEC      => DATEDIFF(millisecond, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()),
+            LOG_STATUS         => 'START',
+            SOURCE_OBJECT      => 'RAW_HIST.' || :v_table,
+            TARGET_OBJECT      => 'STG.' || :v_table,
+            ROW_COUNT          => 0,
+            LOG_MESSAGE        => 'START: Rerun from HIST started.',
+            LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
+                'procedure', 'SP_RERUN_RAW_HIST_TO_STG',
+                'run_id', :v_run_id,
+                'iteration', :v_iter,
+                'load_type', :v_load_type
+            )::STRING,
+            RUN_ID             => :v_run_id
+        ) INTO :v_log_rows;
+
+        /* ============================================================
+           3. MODIFY DDL & ASSERT SUBSTITUTION
+           ============================================================ */
+        v_phase := 'MODIFY DDL';
+        
+        -- Step A: Trim original and attempt substitution
+        v_modified_ddl := REPLACE(
+                            REPLACE(RTRIM(TRIM(:v_original_ddl), ';'), '.RAW.', '.RAW_HIST.'),
+                            'create or replace view',
+                            'create or replace temporary view'
+                                );
+
+        -- Step B: Assertion Check
+        -- If the string is identical to the trimmed original, the REPLACE found no matches.
+        IF (v_modified_ddl = RTRIM(TRIM(:v_original_ddl), ';')) THEN
+            v_error_msg := 'DDL Redirection Failed: The pattern ".RAW." was not found in the DDL of EX.' || v_table || '. Rerun aborted to prevent processing current data.';
+            RAISE e_failed;
+        END IF;
+
+        -- Step C: Append PPN filter
+        v_modified_ddl := v_modified_ddl || ' WHERE PPN_ID = ' || :v_curr_ppn;
+
+        v_phase := 'APPLY REDIRECT (PPN_ID = ' || v_curr_ppn || ')';
+        EXECUTE IMMEDIATE :v_modified_ddl;
+
+        /* ============================================================
+           4. DATA LOADING
+           ============================================================ */
+        v_phase := 'LOAD FROM EX TO EX_HIST';
+        CALL ADM.SP_LOAD_TO_HIST(
+            P_PPN_ID => :v_curr_ppn, P_TABLE => :v_table, P_SOURCE_SCHEMA => 'EX', 
+            P_SOURCE_ID => :v_source_id, P_RUN_ID => :v_run_id
+        ) INTO :v_ex_hist_result;
+
+        IF (UPPER(COALESCE(GET(v_ex_hist_result, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
+            v_error_msg := 'SP_LOAD_TO_HIST(EX) returned ERROR: ' || COALESCE(v_ex_hist_result::STRING, '(null)');
+            RAISE e_failed;
+        END IF;
+
+        -- Same P_LOAD_TYPE for every PPN, so the rerun reproduces the original
+        -- sequence of loads (e.g. a series of FULL loads ends with the highest
+        -- PPN in STG, exactly as production would).
+        v_phase := 'LOAD FROM EX TO STG';
+        CALL ADM.SP_EX_TO_STG(
+            P_PPN_ID => :v_curr_ppn, P_TABLE => :v_table, P_LOAD_TYPE => :v_load_type, 
+            P_OTHER => :P_OTHER, P_RUN_ID => :v_run_id, P_SOURCE_ID => :v_source_id
+        ) INTO :v_stg_result;
+
+        IF (UPPER(COALESCE(GET(v_stg_result, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
+            v_error_msg := 'SP_EX_TO_STG returned ERROR: ' || COALESCE(v_stg_result::STRING, '(null)');
+            RAISE e_failed;
+        END IF;
+
+        CALL ADM.SP_WRITE_PPN_LOG(
+            PPN_ID             => :v_curr_ppn,
+            SOURCE_ID          => :v_source_id,
+            PPN_PHASE          => 'RERUN FOR PPN_ID=' || :v_curr_ppn || ' END',
+            LOG_START          => :v_started_at,
+            LOG_END            => CURRENT_TIMESTAMP(),
+            DURATION_MSEC      => DATEDIFF(millisecond, :v_started_at, CURRENT_TIMESTAMP()),
+            LOG_STATUS         => 'END',
+            SOURCE_OBJECT      => 'RAW_HIST.' || :v_table,
+            TARGET_OBJECT      => 'STG.' || :v_table,
+            ROW_COUNT          => GET(:v_stg_result, 'rows_inserted')::NUMBER,
+            LOG_MESSAGE        => 'END: Rerun successful.',
+            LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
+                'procedure', 'SP_RERUN_RAW_HIST_TO_STG',
+                'run_id', :v_run_id,
+                'iteration', :v_iter,
+                'load_type', :v_load_type,
+                'stg_result', :v_stg_result
+            )::STRING,
+            RUN_ID             => :v_run_id
+        ) INTO :v_log_rows;
+
+    END FOR;
+    
+    --This is not needed when using temporary view, which is available only for the current session.
+    --v_phase := 'RESTORE VIEW';
+    --EXECUTE IMMEDIATE :v_original_ddl;
+
+    RETURN OBJECT_CONSTRUCT(
+        'status', 'SUCCESS',
+        'procedure', 'SP_RERUN_RAW_HIST_TO_STG',
+        'table', v_table,
+        'run_id', v_run_id,
+        'load_type', v_load_type,
+        'ppn_processed_count', v_iter
+    );
+
+EXCEPTION
+    WHEN OTHER THEN
+    --This is not needed when using temporary view, which is available only for the current session.
+    -- Safely restore view if original DDL was successfully fetched
+    --    IF (v_original_ddl IS NOT NULL) THEN
+    --        EXECUTE IMMEDIATE :v_original_ddl;
+    --    END IF;
+
+        LET v_final_msg STRING := COALESCE(v_error_msg, SQLERRM);
+        
+        BEGIN
+            IF (v_ppn_id IS NOT NULL) THEN
+                CALL ADM.SP_WRITE_PPN_LOG(
+                    PPN_ID             => :v_ppn_id,
+                    SOURCE_ID          => COALESCE(:v_source_id, 'N/A'),
+                    PPN_PHASE          => 'RERUN ERROR',
+                    LOG_START          => :v_started_at,
+                    LOG_END            => CURRENT_TIMESTAMP(),
+                    DURATION_MSEC      => DATEDIFF(millisecond, :v_started_at, CURRENT_TIMESTAMP()),
+                    LOG_STATUS         => 'ERROR',
+                    SOURCE_OBJECT      => COALESCE(:v_table, 'UNKNOWN'),
+                    TARGET_OBJECT      => 'STG.' || COALESCE(:v_table, 'UNKNOWN'),
+                    ROW_COUNT          => NULL,
+                    LOG_MESSAGE        => 'ERROR: Rerun process failed at phase: ' || :v_phase,
+                    LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
+                        'failed_phase', :v_phase,
+                        'error_message', :v_final_msg,
+                        'iteration', :v_iter,
+                        'load_type', :v_load_type,
+                        'sqlcode', :SQLCODE,
+                        'sqlerrm', :SQLERRM
+                    )::STRING,
+                    RUN_ID             => :v_run_id
+                ) INTO :v_log_rows;
+            END IF;
+        EXCEPTION WHEN OTHER THEN NULL; END;
+
+        RAISE;
+END;
