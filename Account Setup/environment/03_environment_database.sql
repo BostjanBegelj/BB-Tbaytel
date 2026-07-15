@@ -4,7 +4,7 @@
 --
 -- Uses the CREATE_DATABASE procedure in PLATFORM_DB.RBAC. Runs as
 -- ENV_SYSADMIN, which owns the resulting database. Requires the
--- platform provisioning grants from 01_env_admin_roles.sql.
+-- platform provisioning grants from 01_environment_admin_roles.sql.
 -- ============================================================
 SET ENV_ABBR = 'DEV_';
 SET DB_NAME  = $ENV_ABBR || 'DB';
@@ -16,4 +16,4 @@ USE WAREHOUSE PLATFORM_WH;
 USE DATABASE PLATFORM_DB;
 USE SCHEMA RBAC;
 
-CALL PLATFORM_DB.RBAC.CREATE_DATABASE($DB_NAME);
+CALL PLATFORM_DB.RBAC.CREATE_DAT

@@ -1,8 +1,11 @@
+-- ============================================================
 -- State validation / inventory export
--- Run after every deployment and save the output with the release.
--- Purpose: (1) detect drift between scripts and the account,
---          (2) generate the Terraform import-block list at migration time
---              (names are deterministic, so imports.tf can be built from this).
+-- RUN AFTER EACH DEPLOYMENT (account + environment layers).
+-- Purpose: (1) detect drift between scripts and the account;
+--          (2) generate the Terraform import-block list at migration
+--              time (names are deterministic).
+-- Read-only (SHOW + ACCOUNT_USAGE queries).
+-- ============================================================
 
 USE ROLE ACCOUNTADMIN; -- or SECURITYADMIN for the grants sections
 

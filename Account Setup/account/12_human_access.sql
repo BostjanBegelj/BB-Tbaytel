@@ -9,7 +9,7 @@
 --
 -- Only SERVICE users are created in SQL, with key-pair auth:
 --   - SVC_TERRAFORM        (account/04_svc_terraform_user.sql)
---   - SVC_<ENV>_ADF        (environment/05_env_service_users.sql)
+--   - SVC_<ENV>_ADF        (environment/05_environment_service_users.sql)
 --
 -- SSO / SCIM setup itself (SAML2 security integration + SCIM
 -- integration + Entra group-to-role mapping) is configured

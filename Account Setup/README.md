@@ -21,25 +21,33 @@ Organized by **lifecycle**, not by object type:
 
 | # | File | Creates |
 |---|------|---------|
-| 01 | `01_account_parameters.sql` | Account `TIMEZONE` |
-| 02 | `02_platform_db_and_procs.sql` | `PLATFORM_WH`, `PLATFORM_DB`, `RBAC` schema, provisioning procs (`CREATE_DATABASE`, `DROP_DATABASE`, `CREATE_SCHEMA`, `DROP_SCHEMA`) |
-| 03 | `03_terraform_admin_role.sql` | `TERRAFORM_ADMIN` account role + global grants |
-| 04 | `04_svc_terraform_user.sql` | `SVC_TERRAFORM` service user (key-pair) |
-| 05 | `05_human_access.sql` | Reference: people come via SSO/SCIM; optional break-glass admin |
-| 06 | `06_integration_git_github.sql` | GitHub API integration + git repository (public / OAuth / PAT) |
-| 07 | `07_integration_git_azure_devops.sql` | Azure DevOps API integration + PAT secret + git repository |
-| 08 | `08_integration_storage_azure.sql` | Azure Blob storage integration |
-| 09 | `09_integration_storage_s3.sql` | AWS S3 storage integration (+ free public-bucket test) |
-| 10 | `10_security_db.sql` | `SECURITY_DB` + schemas (`INBOUND_TRAFFIC`, `OUTBOUND_TRAFFIC`, `INTERNAL_STAGE`, `POLICIES`); ownership to SECURITYADMIN |
-| 11 | `11_network_rules.sql` | Ingress network rules (Tbaytel, In516ht, Azure Private Link) in `INBOUND_TRAFFIC` |
-| 12 | `12_network_policy.sql` | Account `INGRESS_POLICY` referencing the rules + **guarded** activation |
-| 13 | `13_auth_password_policies.sql` | Account password + authentication policies in `POLICIES` + **guarded** activation |
-| 14 | `14_masking_row_access_templates.sql` | Masking / row-access policy templates (do not run as-is) |
+| 01 | `01_account_parameters.sql` | Account `TIMEZONE` and other account-level parameters |
+| 02 | `02_platform_database.sql` | `PLATFORM_WH` + `PLATFORM_DB` + schemas (`RBAC`, `DEPLOYMENT`, `MONITORING`, `UTIL`, `REFERENCE`, `SHARED_WORKSPACE`) |
+| 03 | `03_platform_rbac_procedures.sql` | Provisioning procs in `RBAC` (`CREATE_DATABASE`, `DROP_DATABASE`, `CREATE_SCHEMA`, `DROP_SCHEMA`) |
+| 04 | `04_platform_objects.sql` | Dummy scaffold objects + sample rows in each PLATFORM_DB schema |
+| 05 | `05_security_database.sql` | `SECURITY_DB` + schemas (`INBOUND_TRAFFIC`, `OUTBOUND_TRAFFIC`, `INTERNAL_STAGE`, `POLICIES`); ownership to SECURITYADMIN |
+| 06 | `06_security_network_rules.sql` | Ingress network rules (Tbaytel, In516ht, Azure Private Link) in `INBOUND_TRAFFIC` |
+| 07 | `07_security_network_policy.sql` | Account `INGRESS_POLICY` referencing the rules + **guarded** activation |
+| 08 | `08_security_auth_password_policies.sql` | Account password + authentication policies in `POLICIES` + **guarded** activation |
+| 09 | `09_security_masking_row_access_templates.sql` | Masking / row-access policy templates (do not run as-is) |
+| 10 | `10_terraform_admin_role.sql` | `TERRAFORM_ADMIN` account role + global grants |
+| 11 | `11_terraform_service_user.sql` | `SVC_TERRAFORM` service user (key-pair) |
+| 12 | `12_human_access.sql` | Reference: people come via SSO/SCIM; optional break-glass admin |
+| 13 | `13_integration_git_github.sql` | GitHub API integration + git repository (public / OAuth / PAT) |
+| 14 | `14_integration_git_azure_devops.sql` | Azure DevOps API integration + PAT secret + git repository |
+| 15 | `15_integration_storage_azure_blob.sql` | Azure Blob storage integration |
+| 16 | `16_integration_storage_s3.sql` | AWS S3 storage integration (+ free public-bucket test) |
 
-> Security (10–14) is owned by **SECURITYADMIN**, keeping security a distinct
+Groups: **platform** (02–04) · **security** (05–09) · **terraform/identity** (10–12) · **integrations** (13–16).
+
+> Security (05–09) is owned by **SECURITYADMIN**, keeping security a distinct
 > duty from platform admin (SYSADMIN / `PLATFORM_DB`). All `ALTER ACCOUNT SET`
 > activations (network policy, auth/password policy) are **commented out** —
 > read the lockout warnings and verify access before enabling them.
+
+> `PLATFORM_DB` holds account-wide **non-security** admin content only (security
+> objects → `SECURITY_DB`, per-environment data → `{ENV}_DB`). The objects in
+> `04` are dummy placeholders illustrating the intended content of each schema.
 
 Integration notes: only **Git** has a truly free/public test path (a
 public repo needs no credentials; your personal repo works via OAuth or
@@ -52,17 +60,17 @@ option — they need your own tenant/org plus credentials.
 
 | # | File | Creates |
 |---|------|---------|
-| 01 | `01_env_admin_roles.sql` | `{ENV}_SYSADMIN`, `{ENV}_USERADMIN`, their account grants, **and platform provisioning access** (usage on `PLATFORM_WH`/`PLATFORM_DB`/`RBAC`/procs) |
-| 02 | `02_functional_roles_and_warehouses.sql` | 8 functional roles + one warehouse each |
+| 01 | `01_environment_admin_roles.sql` | `{ENV}_SYSADMIN`, `{ENV}_USERADMIN`, their account grants, **and platform provisioning access** (usage on `PLATFORM_WH`/`PLATFORM_DB`/`RBAC`/procs) |
+| 02 | `02_environment_functional_roles_and_warehouses.sql` | 8 functional roles + one warehouse each |
 | 03 | `03_environment_database.sql` | `{ENV}_DB` (via `CREATE_DATABASE`) |
 | 04 | `04_environment_schemas.sql` | 9 medallion schemas + retention tiers + RO/FULL role grants |
-| 05 | `05_env_service_users.sql` | `SVC_{ENV}_ADF` (role `{ENV}_DATA_LOADER`) and `SVC_{ENV}_POWERBI` (role `{ENV}_REPORTER`) — both key-pair |
+| 05 | `05_environment_service_users.sql` | `SVC_{ENV}_ADF` (role `{ENV}_DATA_LOADER`) and `SVC_{ENV}_POWERBI` (role `{ENV}_REPORTER`) — both key-pair |
 
 ### 3. validation/ (run after each deployment)
 
 | # | File | Purpose |
 |---|------|---------|
-| 00 | `00_validate_state.sql` | Object/role/grant inventory + ownership drift check; also the basis for generating the Terraform `imports.tf` list |
+| 01 | `01_validate_state.sql` | Object/role/grant inventory + ownership drift check; also the basis for generating the Terraform `imports.tf` list |
 
 Run it after the account and environment layers and save the output with the
 release. Read-only (`SHOW` + `ACCOUNT_USAGE` queries); note `ACCOUNT_USAGE`

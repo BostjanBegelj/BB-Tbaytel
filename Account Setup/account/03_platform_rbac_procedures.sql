@@ -1,38 +1,23 @@
--- PLATFORM_DB initialization script
--- creates the following objects in the environment
---   warehouse PLATFORM_WH
---   database PLATFORM_DB
---   schema RBAC
--- set the environment abbreviation variable
--- -----------------------------------------
-SET ENV_ABBR = ''; -- for all environments
--- -----------------------------------------
-
--- define environment administration roles
-SET ENV_SYSADMIN = $ENV_ABBR || 'SYSADMIN';
-SET ENV_USERADMIN = $ENV_ABBR || 'USERADMIN';
-SET ENV_WH = $ENV_ABBR || 'PLATFORM_WH';
-SET ENV_DB = $ENV_ABBR || 'PLATFORM_DB';
-
-USE ROLE IDENTIFIER($ENV_SYSADMIN);
-CREATE WAREHOUSE IF NOT EXISTS IDENTIFIER($ENV_WH) WITH
-  WAREHOUSE_TYPE = STANDARD
-  WAREHOUSE_SIZE = XSMALL
-  AUTO_SUSPEND = 60
-  AUTO_RESUME = TRUE
-  INITIALLY_SUSPENDED = TRUE;
-
-CREATE DATABASE IF NOT EXISTS IDENTIFIER($ENV_DB);
-USE DATABASE IDENTIFIER($ENV_DB);
-DROP SCHEMA IF EXISTS PUBLIC;
-CREATE SCHEMA IF NOT EXISTS RBAC WITH MANAGED ACCESS;
-
-USE ROLE IDENTIFIER($ENV_SYSADMIN);
-USE DATABASE IDENTIFIER($ENV_DB);
+-- ============================================================
+-- PLATFORM_DB.RBAC - provisioning procedures
+-- RUN ONCE PER ACCOUNT (re-run whole file after any edit).
+--
+-- Stored procedures used to provision environments:
+--   CREATE_DATABASE / DROP_DATABASE - environment databases
+--   CREATE_SCHEMA   / DROP_SCHEMA   - schemas + RO/RW/FULL access roles
+--
+-- EXECUTE AS CALLER: they run with the caller's privileges (e.g.
+-- {ENV}_SYSADMIN), so the caller owns the objects created.
+-- Requires 02_platform_database.sql (PLATFORM_DB + RBAC) first.
+-- ============================================================
+USE ROLE SYSADMIN;
+USE DATABASE PLATFORM_DB;
 USE SCHEMA RBAC;
--- -------------------------------------------------------------------------
--- Create database procedure - creates a new database within the environment
--- -------------------------------------------------------------------------
+
+
+-- ------------------------------------------------------------
+-- CREATE_DATABASE - create a new environment database
+-- ------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE CREATE_DATABASE (database_name VARCHAR)
 RETURNS VARCHAR
 EXECUTE AS CALLER
@@ -45,12 +30,10 @@ BEGIN
   RETURN 'Success';
 END;
 
-USE ROLE IDENTIFIER($ENV_SYSADMIN);
-USE DATABASE IDENTIFIER($ENV_DB);
-USE SCHEMA RBAC;
--- -------------------------------------------------------------------------
--- Drop database procedure - drops the database if it doesn't contain any schemas
--- -------------------------------------------------------------------------
+
+-- ------------------------------------------------------------
+-- DROP_DATABASE - drop a database only if it has no user schemas
+-- ------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE DROP_DATABASE (database_name VARCHAR)
 RETURNS VARCHAR
 EXECUTE AS CALLER
@@ -82,12 +65,10 @@ BEGIN
     RETURN 'Database ' || :database_name || ' was dropped';
 END;
 
-USE ROLE IDENTIFIER($ENV_SYSADMIN);
-USE DATABASE IDENTIFIER($ENV_DB);
-USE SCHEMA RBAC;
--- -------------------------------------------------------------------------
--- Create schema procedure - creates a new schema and access roles within the environment
--- -------------------------------------------------------------------------
+
+-- ------------------------------------------------------------
+-- CREATE_SCHEMA - create a schema + RO/RW/FULL access roles
+-- ------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE CREATE_SCHEMA (database_name VARCHAR, schema_name VARCHAR, env_abbr VARCHAR)
 RETURNS VARCHAR
 EXECUTE AS CALLER
@@ -118,7 +99,7 @@ BEGIN
     -- full access
     CREATE DATABASE ROLE IF NOT EXISTS IDENTIFIER(:FULL_ROLE);
     RETURN_MSG := RETURN_MSG || 'Created role ' || FULL_ROLE || '; ';
-    -- grant ro role to rw role to maintain role hierarchy
+    -- grant rw role to full role to maintain role hierarchy
     GRANT DATABASE ROLE IDENTIFIER(:RW_ROLE) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
     GRANT DATABASE ROLE IDENTIFIER(:FULL_ROLE) TO ROLE IDENTIFIER(:ENV_SYSADMIN_ROLE);
 
@@ -167,28 +148,13 @@ BEGIN
     -- do not grant future ownership because it messes up some object types (eg. tasks, dynamic tables, data metric functions, etc.)
     -- use a functional role to create objects
 
-    --GRANT OWNERSHIP ON FUTURE TABLES IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE EXTERNAL TABLES IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE VIEWS IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE STAGES IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE FILE FORMATS IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE STREAMS IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE PROCEDURES IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE FUNCTIONS IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE MATERIALIZED VIEWS IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE SEQUENCES IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE TASKS IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    --GRANT OWNERSHIP ON FUTURE PIPES IN SCHEMA IDENTIFIER(:QUALIFIED_SCHEMA_NAME) TO DATABASE ROLE IDENTIFIER(:FULL_ROLE);
-    
     RETURN RETURN_MSG;
 END;
 
-USE ROLE IDENTIFIER($ENV_SYSADMIN);
-USE DATABASE IDENTIFIER($ENV_DB);
-USE SCHEMA RBAC;
--- -------------------------------------------------------------------------
--- Drop schema procedure - drops the schema and access roles
--- -------------------------------------------------------------------------
+
+-- ------------------------------------------------------------
+-- DROP_SCHEMA - drop a schema and its RO/RW/FULL access roles
+-- ------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE DROP_SCHEMA (database_name VARCHAR, schema_name VARCHAR)
 RETURNS VARCHAR
 EXECUTE AS CALLER

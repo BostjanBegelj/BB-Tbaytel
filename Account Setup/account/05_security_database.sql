@@ -1,7 +1,10 @@
--- SECURITY_DB initialization script (Snowflake Standards v0.6, section 4.3)
--- Creates the account-wide security database. Unprefixed - exists ONCE per account.
--- Owned by the built-in SECURITYADMIN role, so security administration stays a
--- distinct duty from platform administration (PLATFORM_DB / SYSADMIN).
+-- ============================================================
+-- SECURITY_DB - account-wide security database
+-- RUN ONCE PER ACCOUNT.  (Snowflake Standards v0.6, section 4.3)
+-- Unprefixed, exists once. Owned by SECURITYADMIN so security
+-- administration stays a distinct duty from platform admin
+-- (PLATFORM_DB / SYSADMIN).
+-- ============================================================
 --
 -- Schemas (network rules organised by direction, policies together):
 --   INBOUND_TRAFFIC  - ingress network rules (customer, In516ht, Private Link / VNet)

@@ -1,7 +1,10 @@
--- Authentication and password policies (Snowflake Standards v0.6, sections 4.3 / 6.1)
--- Both are SCHEMA objects and live in SECURITY_DB.POLICIES; they are then set
--- as account defaults. Humans authenticate via Entra ID SSO (SAML2), service
--- users via key pair; passwords remain only for break-glass (user-level policy).
+-- ============================================================
+-- SECURITY_DB authentication & password policies
+-- RUN ONCE PER ACCOUNT.  (Snowflake Standards v0.6, sections 4.3 / 6.1)
+-- Schema objects in SECURITY_DB.POLICIES, set as account defaults.
+-- Humans authenticate via Entra ID SSO (SAML2), service users via
+-- key pair; passwords remain only for break-glass (user-level policy).
+-- ============================================================
 
 USE ROLE SECURITYADMIN;
 

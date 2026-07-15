@@ -1,7 +1,10 @@
--- Masking / row-access policy TEMPLATES (Snowflake Standards v0.6, section 4.3)
--- Policies are defined centrally in SECURITY_DB.POLICIES and APPLIED to columns/
--- tables in the environment databases. Business Critical edition supports both.
--- These are templates - copy, rename and adapt per data domain; do not run as-is.
+-- ============================================================
+-- SECURITY_DB masking / row-access policy TEMPLATES
+-- RUN ONCE PER ACCOUNT (templates - do not run as-is).  (Standards v0.6, 4.3)
+-- Policies defined centrally in SECURITY_DB.POLICIES and applied to
+-- columns/tables in the environment databases (Business Critical).
+-- Copy, rename and adapt per data domain.
+-- ============================================================
 
 USE ROLE SECURITYADMIN;
 

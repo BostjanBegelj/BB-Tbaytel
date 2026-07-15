@@ -1,6 +1,9 @@
--- Account network policy INGRESS_POLICY (Snowflake Standards v0.6, sections 4.3 / 4.4)
--- The policy itself is an ACCOUNT-LEVEL object (lives outside any database);
--- the network rules it references live in SECURITY_DB.INBOUND_TRAFFIC (see 4_1).
+-- ============================================================
+-- Account network policy INGRESS_POLICY
+-- RUN ONCE PER ACCOUNT.  (Snowflake Standards v0.6, sections 4.3 / 4.4)
+-- Account-level object (outside any database) referencing the rules
+-- in SECURITY_DB.INBOUND_TRAFFIC (06_security_network_rules).
+-- ============================================================
 
 USE ROLE SECURITYADMIN;
 
@@ -13,7 +16,7 @@ CREATE NETWORK POLICY IF NOT EXISTS INGRESS_POLICY
   COMMENT = 'Account ingress policy - rules maintained in SECURITY_DB.INBOUND_TRAFFIC';
 
 -- to change the rule list on an existing policy, use ALTER (rules content itself
--- is changed in 4_1 without touching the policy):
+-- is changed in 06_security_network_rules without touching the policy):
 -- ALTER NETWORK POLICY INGRESS_POLICY SET ALLOWED_NETWORK_RULE_LIST = ( ... );
 
 -- ---------------------------------------------------------------------------

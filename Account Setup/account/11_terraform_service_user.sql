@@ -4,7 +4,7 @@
 --
 -- Prerequisites:
 --   - TERRAFORM_ADMIN exists (account/03_terraform_admin_role.sql)
---   - PLATFORM_WH exists (account/02_platform_db_and_procs.sql)
+--   - PLATFORM_WH exists (account/02_platform_database.sql)
 --
 -- TYPE = SERVICE, key-pair authentication only, no password.
 -- CI/CD use only - not an interactive human account.

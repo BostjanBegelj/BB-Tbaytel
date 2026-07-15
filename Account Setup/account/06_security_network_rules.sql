@@ -1,8 +1,10 @@
--- Network rules (Snowflake Standards v0.6, sections 4.3 / 4.4)
--- Network rules are schema objects and live in SECURITY_DB.INBOUND_TRAFFIC.
--- Network rules live here (SECURITY_DB), NOT in PLATFORM_DB - the old
--- PLATFORM_DB/ADMIN_DB network-rules script has been removed.
--- The rules are referenced by the account-level INGRESS_POLICY (see 4_2).
+-- ============================================================
+-- SECURITY_DB network rules (INBOUND_TRAFFIC)
+-- RUN ONCE PER ACCOUNT.  (Snowflake Standards v0.6, sections 4.3 / 4.4)
+-- Ingress network rules (schema objects) in SECURITY_DB.INBOUND_TRAFFIC,
+-- NOT PLATFORM_DB. Referenced by the account INGRESS_POLICY
+-- (07_security_network_policy).
+-- ============================================================
 --
 -- Pattern: CREATE IF NOT EXISTS + ALTER SET (non-destructive, rerunnable).
 -- NOT CREATE OR REPLACE - a rule referenced by an active network policy cannot
