@@ -58,36 +58,97 @@ XfrUT8twKsAKQKWsS8FrplRS01k60DYtKeTL2cKqoy36vyQhLmxPrek7yveLCDNt
 -----END PRIVATE KEY-----
 */
 
+```sql
+-- ============================================================
+-- SERVICE USER SETUP
+--
+-- Creates:
+--
+--   1. Environment-specific Azure Data Factory service user
+--      Example for DEV:
+--        User:      SVC_DEV_ADF
+--        Role:      DEV_DATA_LOADER
+--        Warehouse: DEV_DATA_LOADER_WH
+--
+--   2. Account-level Terraform service user
+--        User:      SVC_TERRAFORM
+--        Role:      TERRAFORM_ADMIN
+--        Warehouse: PLATFORM_WH
+--
+-- Both users:
+--   - Are TYPE = SERVICE.
+--   - Use key-pair authentication only.
+--   - Do not have passwords.
+--   - Must use separate RSA key pairs.
+--
+-- Prerequisites:
+--   - The environment roles and warehouses already exist.
+--   - TERRAFORM_ADMIN has already been created and granted the
+--     required account-level privileges.
+--   - PLATFORM_WH already exists.
+-- ============================================================
+
 
 -- ============================================================
 -- ENVIRONMENT CONFIGURATION
+--
+-- Change only ENV_ABBR when deploying another environment:
+--   DEV_
+--   TEST_
+--   QA_
+--   PROD_
 -- ============================================================
 
 SET ENV_ABBR = 'DEV_';
 
-SET ENV_SYSADMIN  = $ENV_ABBR || 'SYSADMIN';
+-- Environment-specific USERADMIN role.
 SET ENV_USERADMIN = $ENV_ABBR || 'USERADMIN';
 
 
 -- ============================================================
 -- ADF SERVICE USER CONFIGURATION
+--
+-- ADF is environment-specific because each environment has its
+-- own data-loading role and warehouse.
+--
+-- With ENV_ABBR = 'DEV_', the values are:
+--   User:      SVC_DEV_ADF
+--   Role:      DEV_DATA_LOADER
+--   Warehouse: DEV_DATA_LOADER_WH
 -- ============================================================
 
-SET SVC_ADF_USER     = 'SVC_' || $ENV_ABBR || 'ADF';
-SET ADF_ROLE         = $ENV_ABBR || 'DATA_LOADER';
-SET ADF_WAREHOUSE    = $ENV_ABBR || 'DATA_LOADER_WH';
+SET SVC_ADF_USER  = 'SVC_' || $ENV_ABBR || 'ADF';
+SET ADF_ROLE      = $ENV_ABBR || 'DATA_LOADER';
+SET ADF_WAREHOUSE = $ENV_ABBR || 'DATA_LOADER_WH';
 
 
 -- ============================================================
 -- TERRAFORM SERVICE USER CONFIGURATION
+--
+-- Terraform uses one account-level service user for all
+-- environments in the Snowflake account.
+--
+-- The user is not prefixed with DEV_, TEST_, QA_, or PROD_.
+--
+-- TERRAFORM_ADMIN replaces ACCOUNTADMIN as the role used by
+-- the Terraform provider and CI/CD deployment pipeline.
 -- ============================================================
 
-SET SVC_TERRAFORM_USER = 'SVC_' || $ENV_ABBR || 'TERRAFORM';
-SET TERRAFORM_ROLE      = $ENV_SYSADMIN;
+SET SVC_TERRAFORM_USER = 'SVC_TERRAFORM';
+SET TERRAFORM_ROLE     = 'TERRAFORM_ADMIN';
+SET TERRAFORM_WAREHOUSE = 'PLATFORM_WH';
 
 
 -- ============================================================
 -- CREATE SERVICE USERS
+--
+-- USERADMIN is responsible for creating and managing users.
+--
+-- No PASSWORD property is defined because both users use
+-- key-pair authentication only.
+--
+-- IF NOT EXISTS makes initial execution repeatable. Note that
+-- it does not update an existing user's properties.
 -- ============================================================
 
 USE ROLE USERADMIN;
@@ -97,43 +158,64 @@ USE ROLE USERADMIN;
 -- Azure Data Factory service user
 -- ------------------------------------------------------------
 
-CREATE USER IDENTIFIER($SVC_ADF_USER)
+CREATE USER IF NOT EXISTS IDENTIFIER($SVC_ADF_USER)
     LOGIN_NAME        = $SVC_ADF_USER
     DISPLAY_NAME      = 'Azure Data Factory'
     TYPE              = 'SERVICE'
-    COMMENT           = 'ADF service user'
+    COMMENT           = 'Environment-specific ADF service user - key-pair authentication only'
     DEFAULT_ROLE      = $ADF_ROLE
     DEFAULT_WAREHOUSE = $ADF_WAREHOUSE
 ;
 
 
 -- ------------------------------------------------------------
--- Terraform service user
+-- Terraform deployment service user
+--
+-- This user must exist before Terraform takes ownership of the
+-- Snowflake infrastructure deployment.
+--
+-- It is intended for CI/CD usage only and must not be used as
+-- an interactive human account.
 -- ------------------------------------------------------------
 
-CREATE USER IDENTIFIER($SVC_TERRAFORM_USER)
-    LOGIN_NAME   = $SVC_TERRAFORM_USER
-    DISPLAY_NAME = 'Terraform'
-    TYPE         = 'SERVICE'
-    COMMENT      = 'Terraform deployment service user'
-    DEFAULT_ROLE = $TERRAFORM_ROLE
+CREATE USER IF NOT EXISTS IDENTIFIER($SVC_TERRAFORM_USER)
+    LOGIN_NAME        = $SVC_TERRAFORM_USER
+    DISPLAY_NAME      = 'Terraform deployment'
+    TYPE              = 'SERVICE'
+    COMMENT           = 'Terraform service user - key-pair authentication, used by CI/CD only'
+    DEFAULT_ROLE      = $TERRAFORM_ROLE
+    DEFAULT_WAREHOUSE = $TERRAFORM_WAREHOUSE
 ;
 
 
 -- ============================================================
--- GRANT ENVIRONMENT-SPECIFIC ROLES
+-- GRANT THE ADF ROLE
+--
+-- Setting DEFAULT_ROLE on a user does not grant that role.
+-- The role must also be explicitly granted to the user.
+--
+-- The environment-specific USERADMIN role is used because it
+-- owns or is authorized to grant the environment roles.
 -- ============================================================
 
 USE ROLE IDENTIFIER($ENV_USERADMIN);
-
-
--- Grant the data-loader role to ADF
 
 GRANT ROLE IDENTIFIER($ADF_ROLE)
     TO USER IDENTIFIER($SVC_ADF_USER);
 
 
--- Grant the environment SYSADMIN role to Terraform
+-- ============================================================
+-- GRANT THE TERRAFORM ROLE
+--
+-- TERRAFORM_ADMIN is an account-level role.
+--
+-- SECURITYADMIN is used to grant the role because it has
+-- MANAGE GRANTS by default.
+--
+-- SVC_TERRAFORM does not receive ACCOUNTADMIN.
+-- ============================================================
+
+USE ROLE SECURITYADMIN;
 
 GRANT ROLE IDENTIFIER($TERRAFORM_ROLE)
     TO USER IDENTIFIER($SVC_TERRAFORM_USER);
@@ -142,12 +224,23 @@ GRANT ROLE IDENTIFIER($TERRAFORM_ROLE)
 -- ============================================================
 -- ASSIGN RSA PUBLIC KEYS
 --
--- Generate a separate key pair for each service user.
+-- Generate a separate RSA key pair for each service user:
+--
+--   - One key pair for SVC_<ENV>_ADF.
+--   - One different key pair for SVC_TERRAFORM.
+--
+-- Only the public key is stored in Snowflake.
 --
 -- Paste only the Base64 public-key content:
---   - without -----BEGIN PUBLIC KEY-----
---   - without -----END PUBLIC KEY-----
---   - without line breaks
+--   - Do not include -----BEGIN PUBLIC KEY-----.
+--   - Do not include -----END PUBLIC KEY-----.
+--   - Remove all line breaks.
+--
+-- Never store private keys in this SQL script or in source
+-- control.
+--
+-- The statements are commented out until valid public keys are
+-- available. Values such as 'MII' or 'MIIB' are not valid keys.
 -- ============================================================
 
 USE ROLE USERADMIN;
@@ -155,44 +248,68 @@ USE ROLE USERADMIN;
 
 -- ------------------------------------------------------------
 -- ADF RSA public key
+--
+-- Store the matching private key in the secure location used
+-- by Azure Data Factory, such as Azure Key Vault.
 -- ------------------------------------------------------------
 
- SET ADF_RSA_PUBLIC_KEY =
-     'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA8HhjM9yn4osGoV5CN1V+
-awjybQ7CZvVyhtrHkAnDYMEhE3q7QFn/39TfnAdsC1B2/Yq9Mca5L+0DVPAFn7p4
-Hu+djQHK6a6OPTgy1SUipbWYN3GgJjyWznit7HjcOTuO+3Bz8z+YNw5L/PbeOB70
-gx8I+xn97AnlbHm6AlcCDiHOnyBJx+Vij2eL7ZIDP9Pzhe4p0mwh7pmvpxC7z5Q6
-shSDdsaKoJqES8LD+ACq6WlIqcnvH2RnTT75+3saSBRq4EAdiyILbbSSjdOTdStf
-D8iPQFv8HXzJltmj0uJBomIcsniv+xUsbXOSrEoxlmCcg82jkaaF/NFnl66Q9Yhs
-bwIDAQAB';
+-- SET ADF_RSA_PUBLIC_KEY =
+--     '<ADF_RSA_PUBLIC_KEY_BODY>';
 
- ALTER USER IDENTIFIER($SVC_ADF_USER)
-     SET RSA_PUBLIC_KEY = $ADF_RSA_PUBLIC_KEY;
+-- ALTER USER IDENTIFIER($SVC_ADF_USER)
+--     SET RSA_PUBLIC_KEY = $ADF_RSA_PUBLIC_KEY;
 
 
 -- ------------------------------------------------------------
 -- Terraform RSA public key
+--
+-- Store the matching private key in the secure secret store
+-- used by the Terraform CI/CD pipeline.
+--
+-- Do not reuse the ADF key pair.
 -- ------------------------------------------------------------
 
- SET TERRAFORM_RSA_PUBLIC_KEY =
-     'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA8HhjM9yn4osGoV5CN1V+
-awjybQ7CZvVyhtrHkAnDYMEhE3q7QFn/39TfnAdsC1B2/Yq9Mca5L+0DVPAFn7p4
-Hu+djQHK6a6OPTgy1SUipbWYN3GgJjyWznit7HjcOTuO+3Bz8z+YNw5L/PbeOB70
-gx8I+xn97AnlbHm6AlcCDiHOnyBJx+Vij2eL7ZIDP9Pzhe4p0mwh7pmvpxC7z5Q6
-shSDdsaKoJqES8LD+ACq6WlIqcnvH2RnTT75+3saSBRq4EAdiyILbbSSjdOTdStf
-D8iPQFv8HXzJltmj0uJBomIcsniv+xUsbXOSrEoxlmCcg82jkaaF/NFnl66Q9Yhs
-bwIDAQAB';
+-- SET TERRAFORM_RSA_PUBLIC_KEY =
+--     '<TERRAFORM_RSA_PUBLIC_KEY_BODY>';
 
- ALTER USER IDENTIFIER($SVC_TERRAFORM_USER)
-     SET RSA_PUBLIC_KEY = $TERRAFORM_RSA_PUBLIC_KEY;
+-- ALTER USER IDENTIFIER($SVC_TERRAFORM_USER)
+--     SET RSA_PUBLIC_KEY = $TERRAFORM_RSA_PUBLIC_KEY;
 
 
 -- ============================================================
--- VALIDATION
+-- OPTIONAL KEY ROTATION
+--
+-- Snowflake supports a second public key through
+-- RSA_PUBLIC_KEY_2. This allows a new key to be introduced
+-- before the previous key is removed.
 -- ============================================================
+
+-- ALTER USER IDENTIFIER($SVC_ADF_USER)
+--     SET RSA_PUBLIC_KEY_2 = '<NEW_ADF_RSA_PUBLIC_KEY_BODY>';
+
+-- ALTER USER IDENTIFIER($SVC_TERRAFORM_USER)
+--     SET RSA_PUBLIC_KEY_2 = '<NEW_TERRAFORM_RSA_PUBLIC_KEY_BODY>';
+
+
+-- ============================================================
+-- VALIDATE USER CONFIGURATION
+--
+-- After valid keys are assigned, RSA_PUBLIC_KEY_FP should be
+-- populated in the DESCRIBE USER output.
+-- ============================================================
+
+USE ROLE USERADMIN;
 
 DESCRIBE USER IDENTIFIER($SVC_ADF_USER);
-SHOW GRANTS TO USER IDENTIFIER($SVC_ADF_USER);
-
 DESCRIBE USER IDENTIFIER($SVC_TERRAFORM_USER);
+
+
+-- ============================================================
+-- VALIDATE ROLE GRANTS
+-- ============================================================
+
+USE ROLE SECURITYADMIN;
+
+SHOW GRANTS TO USER IDENTIFIER($SVC_ADF_USER);
 SHOW GRANTS TO USER IDENTIFIER($SVC_TERRAFORM_USER);
+```
