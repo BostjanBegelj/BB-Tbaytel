@@ -1,0 +1,40 @@
+-- ============================================================
+-- HUMAN ACCESS  -  provisioned via SSO / SCIM (NOT via SQL)
+-- RUN ONCE PER ACCOUNT (reference / bootstrap only).
+--
+-- People authenticate through Entra ID (SAML SSO) and are
+-- provisioned / deprovisioned through SCIM. Environment functional
+-- roles (DEV_ANALYST, DEV_TRANSFORMER, ... ) are mapped to Entra
+-- groups, so NO "CREATE USER ... PASSWORD" statements belong here.
+--
+-- Only SERVICE users are created in SQL, with key-pair auth:
+--   - SVC_TERRAFORM        (account/04_svc_terraform_user.sql)
+--   - SVC_<ENV>_ADF        (environment/05_env_service_users.sql)
+--
+-- SSO / SCIM setup itself (SAML2 security integration + SCIM
+-- integration + Entra group-to-role mapping) is configured
+-- separately as part of the security / identity workstream.
+-- ============================================================
+
+
+-- ------------------------------------------------------------
+-- OPTIONAL break-glass local administrator
+--
+-- A single local admin for emergency access during an SSO / IdP
+-- outage. Keep DISABLED unless policy requires it. If enabled:
+--   - strong random one-time password,
+--   - MUST_CHANGE_PASSWORD = TRUE,
+--   - enroll MFA immediately,
+--   - restrict via network policy and audit its usage.
+-- ------------------------------------------------------------
+
+-- USE ROLE USERADMIN;
+-- CREATE USER IF NOT EXISTS BREAKGLASS_ADMIN
+--     LOGIN_NAME           = 'BREAKGLASS_ADMIN'
+--     DISPLAY_NAME         = 'Break-glass administrator'
+--     PASSWORD             = '<STRONG_RANDOM_ONE_TIME_PASSWORD>'
+--     MUST_CHANGE_PASSWORD = TRUE
+--     COMMENT              = 'Emergency access only - audited';
+--
+-- USE ROLE SECURITYADMIN;
+-- GRANT ROLE ACCOUNTADMIN TO USER BREAKGLASS_ADMIN;
