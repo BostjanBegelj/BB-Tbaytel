@@ -66,5 +66,5 @@ CREATE OR REPLACE GIT REPOSITORY DEV_DB.ADM.BB_TBAYTEL_REPO
 -- ============================================================
 -- VALIDATION
 -- ============================================================
-SHOW GIT BRANCHES IN GIT REPOSITORY DEV_DB.ADM.BB_TBAYTEL_REPO;
+SHOW GIT BRANCHES IN GIT REPOSITORY DEV_DB.ADM."BB-Tbaytel"BAYTEL_REPO;
 -- LS @DEV_DB.ADM.BB_TBAYTEL_REPO/branches/main;
