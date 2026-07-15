@@ -26,12 +26,22 @@ Organized by **lifecycle**, not by object type:
 | 03 | `03_terraform_admin_role.sql` | `TERRAFORM_ADMIN` account role + global grants |
 | 04 | `04_svc_terraform_user.sql` | `SVC_TERRAFORM` service user (key-pair) |
 | 05 | `05_human_access.sql` | Reference: people come via SSO/SCIM; optional break-glass admin |
+| 06 | `06_integration_git_github.sql` | GitHub API integration + git repository (public / OAuth / PAT) |
+| 07 | `07_integration_git_azure_devops.sql` | Azure DevOps API integration + PAT secret + git repository |
+| 08 | `08_integration_storage_azure.sql` | Azure Blob storage integration |
+| 09 | `09_integration_storage_s3.sql` | AWS S3 storage integration (+ free public-bucket test) |
 
-**Also part of the account layer** (currently still in their existing
-folders — to be moved/renumbered into `account/` in a follow-up):
-`4_security/` (SECURITY_DB, network rules, network policy, auth/password/
-masking policies) and `3_integrations/` (Git, storage). These run after
-`02_platform_db_and_procs.sql`.
+**Also part of the account layer** (still in its existing folder — to be
+moved/renumbered into `account/` in a follow-up): `4_security/`
+(SECURITY_DB, network rules, network policy, auth/password/masking
+policies). It runs after `02_platform_db_and_procs.sql`.
+
+Integration notes: only **Git** has a truly free/public test path (a
+public repo needs no credentials; your personal repo works via OAuth or
+PAT if private). **S3** can be read-tested for free via a credential-less
+stage on a public bucket, but the storage *integration* itself needs your
+own AWS IAM role. **Azure Blob** and **Azure DevOps** have no public
+option — they need your own tenant/org plus credentials.
 
 ### 2. environment/ (per environment — set `ENV_ABBR`)
 
