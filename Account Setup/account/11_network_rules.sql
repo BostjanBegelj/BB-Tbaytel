@@ -1,6 +1,7 @@
 -- Network rules (Snowflake Standards v0.6, sections 4.3 / 4.4)
 -- Network rules are schema objects and live in SECURITY_DB.INBOUND_TRAFFIC.
--- SUPERSEDES: 1_account_config/1_1_create_NETWORK_RULES.sql (PLATFORM_DB / ADMIN_DB location).
+-- Network rules live here (SECURITY_DB), NOT in PLATFORM_DB - the old
+-- PLATFORM_DB/ADMIN_DB network-rules script has been removed.
 -- The rules are referenced by the account-level INGRESS_POLICY (see 4_2).
 --
 -- Pattern: CREATE IF NOT EXISTS + ALTER SET (non-destructive, rerunnable).

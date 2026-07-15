@@ -30,11 +30,16 @@ Organized by **lifecycle**, not by object type:
 | 07 | `07_integration_git_azure_devops.sql` | Azure DevOps API integration + PAT secret + git repository |
 | 08 | `08_integration_storage_azure.sql` | Azure Blob storage integration |
 | 09 | `09_integration_storage_s3.sql` | AWS S3 storage integration (+ free public-bucket test) |
+| 10 | `10_security_db.sql` | `SECURITY_DB` + schemas (`INBOUND_TRAFFIC`, `OUTBOUND_TRAFFIC`, `INTERNAL_STAGE`, `POLICIES`); ownership to SECURITYADMIN |
+| 11 | `11_network_rules.sql` | Ingress network rules (Tbaytel, In516ht, Azure Private Link) in `INBOUND_TRAFFIC` |
+| 12 | `12_network_policy.sql` | Account `INGRESS_POLICY` referencing the rules + **guarded** activation |
+| 13 | `13_auth_password_policies.sql` | Account password + authentication policies in `POLICIES` + **guarded** activation |
+| 14 | `14_masking_row_access_templates.sql` | Masking / row-access policy templates (do not run as-is) |
 
-**Also part of the account layer** (still in its existing folder — to be
-moved/renumbered into `account/` in a follow-up): `4_security/`
-(SECURITY_DB, network rules, network policy, auth/password/masking
-policies). It runs after `02_platform_db_and_procs.sql`.
+> Security (10–14) is owned by **SECURITYADMIN**, keeping security a distinct
+> duty from platform admin (SYSADMIN / `PLATFORM_DB`). All `ALTER ACCOUNT SET`
+> activations (network policy, auth/password policy) are **commented out** —
+> read the lockout warnings and verify access before enabling them.
 
 Integration notes: only **Git** has a truly free/public test path (a
 public repo needs no credentials; your personal repo works via OAuth or
@@ -52,6 +57,16 @@ option — they need your own tenant/org plus credentials.
 | 03 | `03_environment_database.sql` | `{ENV}_DB` (via `CREATE_DATABASE`) |
 | 04 | `04_environment_schemas.sql` | 9 medallion schemas + retention tiers + RO/FULL role grants |
 | 05 | `05_env_service_users.sql` | `SVC_{ENV}_ADF` (role `{ENV}_DATA_LOADER`) and `SVC_{ENV}_POWERBI` (role `{ENV}_REPORTER`) — both key-pair |
+
+### 3. validation/ (run after each deployment)
+
+| # | File | Purpose |
+|---|------|---------|
+| 00 | `00_validate_state.sql` | Object/role/grant inventory + ownership drift check; also the basis for generating the Terraform `imports.tf` list |
+
+Run it after the account and environment layers and save the output with the
+release. Read-only (`SHOW` + `ACCOUNT_USAGE` queries); note `ACCOUNT_USAGE`
+grant views can lag by up to ~2 hours.
 
 ## Key design points
 
