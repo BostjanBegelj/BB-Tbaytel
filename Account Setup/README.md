@@ -21,14 +21,14 @@ Organized by **lifecycle**, not by object type:
 
 | # | File | Creates |
 |---|------|---------|
-| 01 | `01_account_parameters.sql` | Account `TIMEZONE` and other account-level parameters |
+| 01 | `01_account_parameters.sql` | Account params (`TIMEZONE`, `STATEMENT_TIMEOUT_IN_SECONDS`, `ABORT_DETACHED_QUERY`, `PERIODIC_DATA_REKEYING`) + guard-rail resource monitor `RM_ACCOUNT_GUARD` |
 | 02 | `02_platform_database.sql` | `PLATFORM_WH` + `PLATFORM_DB` + schemas (`RBAC`, `DEPLOYMENT`, `MONITORING`, `UTIL`, `REFERENCE`, `SHARED_WORKSPACE`) |
 | 03 | `03_platform_rbac_procedures.sql` | Provisioning procs in `RBAC` (`CREATE_DATABASE`, `DROP_DATABASE`, `CREATE_SCHEMA`, `DROP_SCHEMA`) |
-| 04 | `04_platform_objects.sql` | Dummy scaffold objects + sample rows in each PLATFORM_DB schema |
+| 04 | `04_platform_objects.sql` | Dummy scaffold objects + sample rows per PLATFORM_DB schema (incl. `ENV_CONFIG`, `ENTRA_GROUP_ROLE_MAP`) |
 | 05 | `05_security_database.sql` | `SECURITY_DB` + schemas (`INBOUND_TRAFFIC`, `OUTBOUND_TRAFFIC`, `INTERNAL_STAGE`, `POLICIES`); ownership to SECURITYADMIN |
-| 06 | `06_security_network_rules.sql` | Ingress network rules (Tbaytel, In516ht, Azure Private Link) in `INBOUND_TRAFFIC` |
+| 06 | `06_security_network_rules.sql` | Ingress network rules (Tbaytel, In516ht, Azure Private Link, Entra-ID SCIM) in `INBOUND_TRAFFIC` |
 | 07 | `07_security_network_policy.sql` | Account `INGRESS_POLICY` referencing the rules + **guarded** activation |
-| 08 | `08_security_auth_password_policies.sql` | Account password + authentication policies in `POLICIES` + **guarded** activation |
+| 08 | `08_security_auth_password_policies.sql` | Account password + authentication policies (+ SSO-users policy) in `POLICIES` + **guarded** activation |
 | 09 | `09_security_masking_row_access_templates.sql` | Masking / row-access policy templates (do not run as-is) |
 | 10 | `10_terraform_admin_role.sql` | `TERRAFORM_ADMIN` account role + global grants |
 | 11 | `11_terraform_service_user.sql` | `SVC_TERRAFORM` service user (key-pair) |
@@ -37,8 +37,12 @@ Organized by **lifecycle**, not by object type:
 | 14 | `14_integration_git_azure_devops.sql` | Azure DevOps API integration + PAT secret + git repository |
 | 15 | `15_integration_storage_azure_blob.sql` | Azure Blob storage integration |
 | 16 | `16_integration_storage_s3.sql` | AWS S3 storage integration (+ free public-bucket test) |
+| 17 | `17_identity_scim_provisioning.sql` | Entra SCIM: `AAD_PROVISIONER` role + `AAD_PROVISIONING` integration (token generated at runtime) |
+| 18 | `18_identity_sso_saml2.sql` | Entra SSO (SAML2) `ENTRAID_SSO` — **gated** template; run only after Private Link URLs are final |
 
-Groups: **platform** (02–04) · **security** (05–09) · **terraform/identity** (10–12) · **integrations** (13–16).
+Groups: **platform** (02–04) · **security** (05–09) · **terraform + human access** (10–12) · **integrations** (13–16) · **identity federation / Azure** (17–18).
+
+> Azure-integration prep (from the integration guides/runbooks): `01` params + monitor, the Entra SCIM network rule in `06` (also added to `INGRESS_POLICY` in `07`), the SSO-users policy in `08`, `ENTRA_GROUP_ROLE_MAP` in `04`, and `17`/`18`. SSO (`18`) stays gated until the Private Link URLs are final — configuring it earlier forces the SAML IdP re-registration rework.
 
 > Security (05–09) is owned by **SECURITYADMIN**, keeping security a distinct
 > duty from platform admin (SYSADMIN / `PLATFORM_DB`). All `ALTER ACCOUNT SET`

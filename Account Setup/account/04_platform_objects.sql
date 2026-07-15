@@ -37,6 +37,20 @@ INSERT INTO ENV_CONFIG (ENV_ABBR, SCHEMA_NAME, DATA_RETENTION_DAYS) VALUES
     ('DEV_', 'GOLD_MARKETING',14),
     ('DEV_', 'ADM',            7);
 
+-- Entra ID group -> Snowflake role mapping. Drives SCIM grant scripts:
+-- SCIM creates the group roles WITHOUT privileges, so this table records
+-- which functional/access role each Entra group's role should receive.
+CREATE TABLE IF NOT EXISTS ENTRA_GROUP_ROLE_MAP (
+    ENTRA_GROUP    STRING  COMMENT 'Entra ID security group display name',
+    SNOWFLAKE_ROLE STRING  COMMENT 'Functional/access role to grant to the SCIM-created group role',
+    IS_ACTIVE      BOOLEAN DEFAULT TRUE
+) COMMENT = 'Dummy: Entra group -> Snowflake role mapping consumed by SCIM grant scripts';
+
+INSERT INTO ENTRA_GROUP_ROLE_MAP (ENTRA_GROUP, SNOWFLAKE_ROLE) VALUES
+    ('SG-TBAYTEL-DATA-ENGINEERS', 'DEV_TRANSFORMER'),
+    ('SG-TBAYTEL-ANALYSTS',       'DEV_ANALYST'),
+    ('SG-TBAYTEL-REPORTING',      'DEV_REPORTER');
+
 
 -- ============================================================
 -- DEPLOYMENT - CI/CD metadata (+ git repositories, see 13/14)
@@ -147,6 +161,7 @@ INSERT INTO SCRATCH_EXAMPLE (NOTE) VALUES
 -- VALIDATION
 -- ============================================================
 SELECT 'RBAC.ENV_CONFIG'                AS OBJECT, COUNT(*) AS ROWS FROM RBAC.ENV_CONFIG
+UNION ALL SELECT 'RBAC.ENTRA_GROUP_ROLE_MAP',  COUNT(*) FROM RBAC.ENTRA_GROUP_ROLE_MAP
 UNION ALL SELECT 'DEPLOYMENT.CHANGE_HISTORY', COUNT(*) FROM DEPLOYMENT.CHANGE_HISTORY
 UNION ALL SELECT 'DEPLOYMENT.RELEASE_LOG',    COUNT(*) FROM DEPLOYMENT.RELEASE_LOG
 UNION ALL SELECT 'MONITORING.WAREHOUSE_CREDITS_SNAPSHOT', COUNT(*) FROM MONITORING.WAREHOUSE_CREDITS_SNAPSHOT

@@ -37,6 +37,21 @@ CREATE AUTHENTICATION POLICY IF NOT EXISTS SECURITY_DB.POLICIES.ACCOUNT_AUTH_POL
   COMMENT = 'Account default authentication policy - SSO for humans, key pair for services';
 
 -- ---------------------------------------------------------------------------
+-- SSO-users authentication policy (optional; assign at user/role level).
+-- MFA for SSO users is enforced by Entra ID Conditional Access, so
+-- Snowflake-side MFA on external auth is left off to avoid double prompts
+-- (Azure integration Doc 07). Do NOT set this as an account default.
+-- ---------------------------------------------------------------------------
+CREATE AUTHENTICATION POLICY IF NOT EXISTS SECURITY_DB.POLICIES.SSO_USERS_AUTH_POLICY
+  AUTHENTICATION_METHODS = ('SAML', 'KEYPAIR')
+  MFA_ENROLLMENT = OPTIONAL
+  CLIENT_TYPES = ('ALL')
+  COMMENT = 'SSO users - MFA enforced by Entra ID; no Snowflake-side external-auth MFA';
+
+-- assign to an individual SSO user (example):
+-- ALTER USER <sso_user> SET AUTHENTICATION POLICY SECURITY_DB.POLICIES.SSO_USERS_AUTH_POLICY;
+
+-- ---------------------------------------------------------------------------
 -- ACTIVATION - !! LOCKOUT RISK !!
 -- Verify SSO (SAML2 integration) works for at least one admin, and that all
 -- service users have RSA keys registered, before setting the account defaults.
