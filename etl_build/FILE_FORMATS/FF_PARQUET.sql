@@ -17,10 +17,10 @@ create or replace file format platform_db.file_formats.ff_parquet
 ;
 
 -- Grant USAGE to the roles that run COPY (uncomment / template per environment):
--- grant usage on schema platform_db.file_formats to role dev_transformer;
--- grant usage on schema platform_db.file_formats to role dev_data_loader;
--- grant usage on file format platform_db.file_formats.ff_parquet to role dev_transformer;
--- grant usage on file format platform_db.file_formats.ff_parquet to role dev_data_loader;
+ grant usage on schema platform_db.file_formats to role dev_transformer;
+ grant usage on schema platform_db.file_formats to role dev_data_loader;
+ grant usage on file format platform_db.file_formats.ff_parquet to role dev_transformer;
+ grant usage on file format platform_db.file_formats.ff_parquet to role dev_data_loader;
 
 -- Verify
 desc file format platform_db.file_formats.ff_parquet;
