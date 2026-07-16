@@ -1,3 +1,13 @@
+/* ================================================================
+   SP_RUN_LANDING_TO_STG — only LOG_MESSAGE_DETAIL content reorganized.
+   Envelope: ERROR / context / results. Snowflake serializes OBJECT keys
+   alphabetically; uppercase sorts before lowercase, so ERROR always
+   renders FIRST in the stored JSON.
+   Key change: child results are no longer concatenated as JSON strings
+   into error_message. The child's own procedure/phase/message/last_sql
+   are lifted into the ERROR block (v_error_source), and the full child
+   payloads stay proper nested objects under results.
+   ================================================================ */
 CREATE OR REPLACE PROCEDURE ADM.SP_RUN_LANDING_TO_STG(
     "P_PPN_ID"    NUMBER(38,0),
     "P_TABLE"     VARCHAR,
@@ -36,6 +46,10 @@ DECLARE
     v_phase              STRING DEFAULT 'INIT';
     v_started_at         TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
     v_error_msg          STRING;
+    -- Holds the failed child's full result so the exception handler can
+    -- lift the exact error source (procedure/phase/message/last_sql)
+    -- into the ERROR block instead of burying it as an escaped string.
+    v_error_source       VARIANT;
     v_log_rows           NUMBER DEFAULT 0;
 
     v_landing_result     VARIANT;
@@ -129,14 +143,16 @@ BEGIN
         ROW_COUNT          => 0,
         LOG_MESSAGE        => 'START: ETL process started.',
         LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-            'procedure', 'SP_RUN_LANDING_TO_STG',
-            'table', :v_table,
-            'file', :v_file,
-            'load_type', :v_load_type,
-            'raw_mode', :v_raw,
-            'ppn_id', :v_ppn_id,
-            'ppn_dt', :v_ppn_dt,
-            'run_id', :v_run_id
+            'context', OBJECT_CONSTRUCT(
+                'procedure', 'SP_RUN_LANDING_TO_STG',
+                'table', :v_table,
+                'file', :v_file,
+                'load_type', :v_load_type,
+                'raw_mode', :v_raw,
+                'ppn_id', :v_ppn_id,
+                'ppn_dt', :v_ppn_dt,
+                'run_id', :v_run_id
+            )
         )::STRING,
         RUN_ID             => :v_run_id
     ) INTO :v_log_rows;
@@ -161,7 +177,10 @@ BEGIN
         -- Parent procedure validates child status and raises a controlled exception
         -- so the process stops and one consistent PROCESS ERROR log is written.
         IF (UPPER(COALESCE(GET(v_landing_result, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
-            v_error_msg := 'SP_LANDING_TO_RAW returned ERROR: ' || COALESCE(v_landing_result::STRING, '(null)');
+            v_error_source := v_landing_result;
+            v_error_msg := 'SP_LANDING_TO_RAW failed in phase [' ||
+                           COALESCE(GET(v_landing_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                           COALESCE(GET(v_landing_result, 'message')::STRING, '(no message)');
             RAISE e_failed;
         END IF;
 
@@ -198,7 +217,10 @@ BEGIN
             );
 
         IF (v_compare_status <> 'SUCCESS' AND NOT v_compare_no_prev) THEN
-            v_error_msg := 'SP_COMPARE_DATALOADS(RAW) returned ERROR: ' || COALESCE(v_compare_result::STRING, '(null)');
+            v_error_source := v_compare_result;
+            v_error_msg := 'SP_COMPARE_DATALOADS(RAW) failed in phase [' ||
+                           COALESCE(GET(v_compare_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                           COALESCE(GET(v_compare_result, 'message')::STRING, '(no message)');
             RAISE e_failed;
         END IF;
 
@@ -217,15 +239,19 @@ BEGIN
                 ROW_COUNT          => NULL,
                 LOG_MESSAGE        => 'SUCCESS: RAW data compare completed. No previous RAW_HIST load exists. Processing continues.',
                 LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                    'procedure', 'SP_RUN_LANDING_TO_STG',
-                    'compare_procedure', 'SP_COMPARE_DATALOADS',
-                    'compare_scope', 'RAW_TO_RAW_HIST',
-                    'action', 'DATA_COMPARE_SUCCESS_NO_PREVIOUS_LOAD',
-                    'table', :v_table,
-                    'file', :v_file,
-                    'ppn_id', :v_ppn_id,
-                    'run_id', :v_run_id,
-                    'compare_result', :v_compare_result
+                    'context', OBJECT_CONSTRUCT(
+                        'procedure', 'SP_RUN_LANDING_TO_STG',
+                        'compare_procedure', 'SP_COMPARE_DATALOADS',
+                        'compare_scope', 'RAW_TO_RAW_HIST',
+                        'action', 'DATA_COMPARE_SUCCESS_NO_PREVIOUS_LOAD',
+                        'table', :v_table,
+                        'file', :v_file,
+                        'ppn_id', :v_ppn_id,
+                        'run_id', :v_run_id
+                    ),
+                    'results', OBJECT_CONSTRUCT(
+                        'compare_result', :v_compare_result
+                    )
                 )::STRING,
                 RUN_ID             => :v_run_id
             ) INTO :v_log_rows;
@@ -252,15 +278,19 @@ BEGIN
                     ROW_COUNT          => :v_rows_compared,
                     LOG_MESSAGE        => 'SKIP_LOAD: New RAW import is identical to the last RAW_HIST load. Further processing skipped.',
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'procedure', 'SP_RUN_LANDING_TO_STG',
-                        'compare_procedure', 'SP_COMPARE_DATALOADS',
-                        'compare_scope', 'RAW_TO_RAW_HIST',
-                        'action', 'SKIP_LOAD_EQUAL_DATA',
-                        'table', :v_table,
-                        'file', :v_file,
-                        'ppn_id', :v_ppn_id,
-                        'run_id', :v_run_id,
-                        'compare_result', :v_compare_result
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_RUN_LANDING_TO_STG',
+                            'compare_procedure', 'SP_COMPARE_DATALOADS',
+                            'compare_scope', 'RAW_TO_RAW_HIST',
+                            'action', 'SKIP_LOAD_EQUAL_DATA',
+                            'table', :v_table,
+                            'file', :v_file,
+                            'ppn_id', :v_ppn_id,
+                            'run_id', :v_run_id
+                        ),
+                        'results', OBJECT_CONSTRUCT(
+                            'compare_result', :v_compare_result
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;
@@ -280,18 +310,22 @@ BEGIN
                     ROW_COUNT          => :v_rows_compared,
                     LOG_MESSAGE        => 'END: ETL process completed successfully. Processing skipped because new import is equal to the last load.',
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'procedure', 'SP_RUN_LANDING_TO_STG',
-                        'action', 'SKIP_LOAD_EQUAL_DATA',
-                        'skipped_after_phase', 'LOAD FROM LANDING TO RAW',
-                        'table', :v_table,
-                        'file', :v_file,
-                        'load_type', :v_load_type,
-                        'raw_mode', :v_raw,
-                        'ppn_id', :v_ppn_id,
-                        'ppn_dt', :v_ppn_dt,
-                        'run_id', :v_run_id,
-                        'landing_result', :v_landing_result,
-                        'compare_result', :v_compare_result
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_RUN_LANDING_TO_STG',
+                            'action', 'SKIP_LOAD_EQUAL_DATA',
+                            'skipped_after_phase', 'LOAD FROM LANDING TO RAW',
+                            'table', :v_table,
+                            'file', :v_file,
+                            'load_type', :v_load_type,
+                            'raw_mode', :v_raw,
+                            'ppn_id', :v_ppn_id,
+                            'ppn_dt', :v_ppn_dt,
+                            'run_id', :v_run_id
+                        ),
+                        'results', OBJECT_CONSTRUCT(
+                            'landing_result', :v_landing_result,
+                            'compare_result', :v_compare_result
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;
@@ -326,15 +360,19 @@ BEGIN
                     ROW_COUNT          => :v_rows_compared,
                     LOG_MESSAGE        => 'SUCCESS: RAW data compare completed. New RAW import differs from the last RAW_HIST load. Processing continues.',
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'procedure', 'SP_RUN_LANDING_TO_STG',
-                        'compare_procedure', 'SP_COMPARE_DATALOADS',
-                        'compare_scope', 'RAW_TO_RAW_HIST',
-                        'action', 'DATA_COMPARE_SUCCESS_DIFFERENT_DATA',
-                        'table', :v_table,
-                        'file', :v_file,
-                        'ppn_id', :v_ppn_id,
-                        'run_id', :v_run_id,
-                        'compare_result', :v_compare_result
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_RUN_LANDING_TO_STG',
+                            'compare_procedure', 'SP_COMPARE_DATALOADS',
+                            'compare_scope', 'RAW_TO_RAW_HIST',
+                            'action', 'DATA_COMPARE_SUCCESS_DIFFERENT_DATA',
+                            'table', :v_table,
+                            'file', :v_file,
+                            'ppn_id', :v_ppn_id,
+                            'run_id', :v_run_id
+                        ),
+                        'results', OBJECT_CONSTRUCT(
+                            'compare_result', :v_compare_result
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;
@@ -358,7 +396,10 @@ BEGIN
         -- Parent procedure validates child status and raises a controlled exception
         -- so the process stops and one consistent PROCESS ERROR log is written.
         IF (UPPER(COALESCE(GET(v_raw_hist_result, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
-            v_error_msg := 'SP_LOAD_TO_HIST(RAW) returned ERROR: ' || COALESCE(v_raw_hist_result::STRING, '(null)');
+            v_error_source := v_raw_hist_result;
+            v_error_msg := 'SP_LOAD_TO_HIST(RAW) failed in phase [' ||
+                           COALESCE(GET(v_raw_hist_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                           COALESCE(GET(v_raw_hist_result, 'message')::STRING, '(no message)');
             RAISE e_failed;
         END IF;
 
@@ -381,7 +422,10 @@ BEGIN
         -- Parent procedure validates child status and raises a controlled exception
         -- so the process stops and one consistent PROCESS ERROR log is written.
         IF (UPPER(COALESCE(GET(v_landing_result, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
-            v_error_msg := 'SP_LANDING_TO_EX returned ERROR: ' || COALESCE(v_landing_result::STRING, '(null)');
+            v_error_source := v_landing_result;
+            v_error_msg := 'SP_LANDING_TO_EX failed in phase [' ||
+                           COALESCE(GET(v_landing_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                           COALESCE(GET(v_landing_result, 'message')::STRING, '(no message)');
             RAISE e_failed;
         END IF;
 
@@ -418,7 +462,10 @@ BEGIN
             );
 
         IF (v_compare_status <> 'SUCCESS' AND NOT v_compare_no_prev) THEN
-            v_error_msg := 'SP_COMPARE_DATALOADS(EX) returned ERROR: ' || COALESCE(v_compare_result::STRING, '(null)');
+            v_error_source := v_compare_result;
+            v_error_msg := 'SP_COMPARE_DATALOADS(EX) failed in phase [' ||
+                           COALESCE(GET(v_compare_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                           COALESCE(GET(v_compare_result, 'message')::STRING, '(no message)');
             RAISE e_failed;
         END IF;
 
@@ -437,15 +484,19 @@ BEGIN
                 ROW_COUNT          => NULL,
                 LOG_MESSAGE        => 'SUCCESS: EX data compare completed. No previous EX_HIST load exists. Processing continues.',
                 LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                    'procedure', 'SP_RUN_LANDING_TO_STG',
-                    'compare_procedure', 'SP_COMPARE_DATALOADS',
-                    'compare_scope', 'EX_TO_EX_HIST',
-                    'action', 'DATA_COMPARE_SUCCESS_NO_PREVIOUS_LOAD',
-                    'table', :v_table,
-                    'file', :v_file,
-                    'ppn_id', :v_ppn_id,
-                    'run_id', :v_run_id,
-                    'compare_result', :v_compare_result
+                    'context', OBJECT_CONSTRUCT(
+                        'procedure', 'SP_RUN_LANDING_TO_STG',
+                        'compare_procedure', 'SP_COMPARE_DATALOADS',
+                        'compare_scope', 'EX_TO_EX_HIST',
+                        'action', 'DATA_COMPARE_SUCCESS_NO_PREVIOUS_LOAD',
+                        'table', :v_table,
+                        'file', :v_file,
+                        'ppn_id', :v_ppn_id,
+                        'run_id', :v_run_id
+                    ),
+                    'results', OBJECT_CONSTRUCT(
+                        'compare_result', :v_compare_result
+                    )
                 )::STRING,
                 RUN_ID             => :v_run_id
             ) INTO :v_log_rows;
@@ -472,15 +523,19 @@ BEGIN
                     ROW_COUNT          => :v_rows_compared,
                     LOG_MESSAGE        => 'SKIP_LOAD: New EX import is identical to the last EX_HIST load. Further processing skipped.',
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'procedure', 'SP_RUN_LANDING_TO_STG',
-                        'compare_procedure', 'SP_COMPARE_DATALOADS',
-                        'compare_scope', 'EX_TO_EX_HIST',
-                        'action', 'SKIP_LOAD_EQUAL_DATA',
-                        'table', :v_table,
-                        'file', :v_file,
-                        'ppn_id', :v_ppn_id,
-                        'run_id', :v_run_id,
-                        'compare_result', :v_compare_result
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_RUN_LANDING_TO_STG',
+                            'compare_procedure', 'SP_COMPARE_DATALOADS',
+                            'compare_scope', 'EX_TO_EX_HIST',
+                            'action', 'SKIP_LOAD_EQUAL_DATA',
+                            'table', :v_table,
+                            'file', :v_file,
+                            'ppn_id', :v_ppn_id,
+                            'run_id', :v_run_id
+                        ),
+                        'results', OBJECT_CONSTRUCT(
+                            'compare_result', :v_compare_result
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;
@@ -500,18 +555,22 @@ BEGIN
                     ROW_COUNT          => :v_rows_compared,
                     LOG_MESSAGE        => 'END: ETL process completed successfully. Processing skipped because new import is equal to the last load.',
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'procedure', 'SP_RUN_LANDING_TO_STG',
-                        'action', 'SKIP_LOAD_EQUAL_DATA',
-                        'skipped_after_phase', 'LOAD FROM LANDING TO EX',
-                        'table', :v_table,
-                        'file', :v_file,
-                        'load_type', :v_load_type,
-                        'raw_mode', :v_raw,
-                        'ppn_id', :v_ppn_id,
-                        'ppn_dt', :v_ppn_dt,
-                        'run_id', :v_run_id,
-                        'landing_result', :v_landing_result,
-                        'compare_result', :v_compare_result
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_RUN_LANDING_TO_STG',
+                            'action', 'SKIP_LOAD_EQUAL_DATA',
+                            'skipped_after_phase', 'LOAD FROM LANDING TO EX',
+                            'table', :v_table,
+                            'file', :v_file,
+                            'load_type', :v_load_type,
+                            'raw_mode', :v_raw,
+                            'ppn_id', :v_ppn_id,
+                            'ppn_dt', :v_ppn_dt,
+                            'run_id', :v_run_id
+                        ),
+                        'results', OBJECT_CONSTRUCT(
+                            'landing_result', :v_landing_result,
+                            'compare_result', :v_compare_result
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;
@@ -546,15 +605,19 @@ BEGIN
                     ROW_COUNT          => :v_rows_compared,
                     LOG_MESSAGE        => 'SUCCESS: EX data compare completed. New EX import differs from the last EX_HIST load. Processing continues.',
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'procedure', 'SP_RUN_LANDING_TO_STG',
-                        'compare_procedure', 'SP_COMPARE_DATALOADS',
-                        'compare_scope', 'EX_TO_EX_HIST',
-                        'action', 'DATA_COMPARE_SUCCESS_DIFFERENT_DATA',
-                        'table', :v_table,
-                        'file', :v_file,
-                        'ppn_id', :v_ppn_id,
-                        'run_id', :v_run_id,
-                        'compare_result', :v_compare_result
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_RUN_LANDING_TO_STG',
+                            'compare_procedure', 'SP_COMPARE_DATALOADS',
+                            'compare_scope', 'EX_TO_EX_HIST',
+                            'action', 'DATA_COMPARE_SUCCESS_DIFFERENT_DATA',
+                            'table', :v_table,
+                            'file', :v_file,
+                            'ppn_id', :v_ppn_id,
+                            'run_id', :v_run_id
+                        ),
+                        'results', OBJECT_CONSTRUCT(
+                            'compare_result', :v_compare_result
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;
@@ -601,7 +664,10 @@ BEGIN
     -- Parent procedure validates child status and raises a controlled exception
     -- so the process stops and one consistent PROCESS ERROR log is written.
     IF (UPPER(COALESCE(GET(v_ex_hist_result, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
-        v_error_msg := 'SP_LOAD_TO_HIST(EX) returned ERROR: ' || COALESCE(v_ex_hist_result::STRING, '(null)');
+        v_error_source := v_ex_hist_result;
+        v_error_msg := 'SP_LOAD_TO_HIST(EX) failed in phase [' ||
+                       COALESCE(GET(v_ex_hist_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                       COALESCE(GET(v_ex_hist_result, 'message')::STRING, '(no message)');
         RAISE e_failed;
     END IF;
 
@@ -623,7 +689,10 @@ BEGIN
     -- Parent procedure validates child status and raises a controlled exception
     -- so the process stops and one consistent PROCESS ERROR log is written.
     IF (UPPER(COALESCE(GET(v_stg_result, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
-        v_error_msg := 'SP_EX_TO_STG returned ERROR: ' || COALESCE(v_stg_result::STRING, '(null)');
+        v_error_source := v_stg_result;
+        v_error_msg := 'SP_EX_TO_STG failed in phase [' ||
+                       COALESCE(GET(v_stg_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                       COALESCE(GET(v_stg_result, 'message')::STRING, '(no message)');
         RAISE e_failed;
     END IF;
 
@@ -646,12 +715,23 @@ BEGIN
         ROW_COUNT          => COALESCE(GET(:v_stg_result, 'rows_inserted')::NUMBER, 0),
         LOG_MESSAGE        => 'END: ETL process successfully completed.',
         LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-            'procedure', 'SP_RUN_LANDING_TO_STG',
-            'landing_result', :v_landing_result,
-            'raw_hist_result', :v_raw_hist_result,
-            'ex_hist_result', :v_ex_hist_result,
-            'stg_result', :v_stg_result,
-            'compare_result', :v_compare_result
+            'context', OBJECT_CONSTRUCT(
+                'procedure', 'SP_RUN_LANDING_TO_STG',
+                'table', :v_table,
+                'file', :v_file,
+                'load_type', :v_load_type,
+                'raw_mode', :v_raw,
+                'ppn_id', :v_ppn_id,
+                'ppn_dt', :v_ppn_dt,
+                'run_id', :v_run_id
+            ),
+            'results', OBJECT_CONSTRUCT(
+                'landing_result', :v_landing_result,
+                'raw_hist_result', :v_raw_hist_result,
+                'ex_hist_result', :v_ex_hist_result,
+                'stg_result', :v_stg_result,
+                'compare_result', :v_compare_result
+            )
         )::STRING,
         RUN_ID             => :v_run_id
     ) INTO :v_log_rows;
@@ -696,22 +776,41 @@ EXCEPTION
                     TARGET_OBJECT      => 'STG.' || COALESCE(:v_table, 'UNKNOWN'),
                     ROW_COUNT          => NULL,
                     LOG_MESSAGE        => 'ERROR: ETL process failed.',
+                    /* ERROR block renders FIRST in the stored JSON and shows
+                       the DEEPEST failure: the child's procedure, phase,
+                       message and last_sql when a child failed (lifted from
+                       v_error_source), or this procedure's own phase for
+                       local failures. sqlcode/sqlstate only for real engine
+                       errors — for controlled RAISE e_failed they would just
+                       repeat the wrapper (-20200) and are omitted. */
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'procedure', 'SP_RUN_LANDING_TO_STG',
-                        'failed_phase', :v_phase,
-                        'error_message', :v_final_msg,
-                        'sqlcode', :SQLCODE,
-                        'sqlstate', :SQLSTATE,
-                        'sqlerrm', :SQLERRM,
-                        'table', :v_table,
-                        'file', :v_file,
-                        'load_type', :v_load_type,
-                        'raw_mode', :v_raw,
-                        'landing_result', :v_landing_result,
-                        'raw_hist_result', :v_raw_hist_result,
-                        'ex_hist_result', :v_ex_hist_result,
-                        'stg_result', :v_stg_result,
-                        'compare_result', :v_compare_result
+                        'ERROR', OBJECT_CONSTRUCT(
+                            'source_procedure', COALESCE(GET(:v_error_source, 'procedure')::STRING, 'SP_RUN_LANDING_TO_STG'),
+                            'source_phase',     COALESCE(GET(:v_error_source, 'phase')::STRING, :v_phase),
+                            'message',          :v_final_msg,
+                            'sqlcode',          COALESCE(GET(:v_error_source, 'sqlcode')::NUMBER,
+                                                         IFF(:v_error_msg IS NULL, :SQLCODE, NULL)),
+                            'sqlstate',         COALESCE(GET(:v_error_source, 'sqlstate')::STRING,
+                                                         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)),
+                            'last_sql',         NULLIF(GET(:v_error_source, 'last_sql')::STRING, '')
+                        ),
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_RUN_LANDING_TO_STG',
+                            'failed_caller_phase', :v_phase,
+                            'table', :v_table,
+                            'file', :v_file,
+                            'load_type', :v_load_type,
+                            'raw_mode', :v_raw,
+                            'ppn_id', :v_ppn_id,
+                            'run_id', :v_run_id
+                        ),
+                        'results', OBJECT_CONSTRUCT(
+                            'landing_result', :v_landing_result,
+                            'raw_hist_result', :v_raw_hist_result,
+                            'ex_hist_result', :v_ex_hist_result,
+                            'stg_result', :v_stg_result,
+                            'compare_result', :v_compare_result
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;

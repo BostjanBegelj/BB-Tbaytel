@@ -1,3 +1,8 @@
+/* ================================================================
+   SP_RERUN_RAW_HIST_TO_STG — only LOG_MESSAGE_DETAIL content
+   reorganized (ERROR / context / results envelope; child error
+   lifted via v_error_source instead of JSON-in-string concat).
+   ================================================================ */
 CREATE OR REPLACE PROCEDURE ADM.SP_RERUN_RAW_HIST_TO_STG(
     "P_PPN_ID"    NUMBER,
     "P_PPN_ALL"   BOOLEAN,
@@ -27,6 +32,9 @@ DECLARE
     v_phase          STRING DEFAULT 'INIT';
     v_started_at     TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
     v_error_msg      STRING;
+    -- Holds the failed child's full result so the exception handler can
+    -- lift the exact error source into the ERROR block.
+    v_error_source   VARIANT;
     v_log_rows       NUMBER DEFAULT 0;
 
     -- Counter for reporting only; the SAME v_load_type is used for every PPN.
@@ -36,9 +44,9 @@ DECLARE
     v_stg_result     VARIANT;
 
     -- Lowest -> highest PPN, so loads are replayed in their original order.
-    c_ppn_list CURSOR FOR 
-        SELECT PPN_ID 
-        FROM ADM.PPN 
+    c_ppn_list CURSOR FOR
+        SELECT PPN_ID
+        FROM ADM.PPN
         WHERE ( :P_PPN_ALL = TRUE AND PPN_ID >= :v_ppn_id )
            OR ( :P_PPN_ALL = FALSE AND PPN_ID = :v_ppn_id )
         ORDER BY PPN_ID ASC;
@@ -97,10 +105,14 @@ BEGIN
             ROW_COUNT          => 0,
             LOG_MESSAGE        => 'START: Rerun from HIST started.',
             LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                'procedure', 'SP_RERUN_RAW_HIST_TO_STG',
-                'run_id', :v_run_id,
-                'iteration', :v_iter,
-                'load_type', :v_load_type
+                'context', OBJECT_CONSTRUCT(
+                    'procedure', 'SP_RERUN_RAW_HIST_TO_STG',
+                    'table', :v_table,
+                    'load_type', :v_load_type,
+                    'iteration', :v_iter,
+                    'ppn_id', :v_curr_ppn,
+                    'run_id', :v_run_id
+                )
             )::STRING,
             RUN_ID             => :v_run_id
         ) INTO :v_log_rows;
@@ -109,7 +121,7 @@ BEGIN
            3. MODIFY DDL & ASSERT SUBSTITUTION
            ============================================================ */
         v_phase := 'MODIFY DDL';
-        
+
         -- Step A: Trim original and attempt substitution
         v_modified_ddl := REPLACE(
                             REPLACE(RTRIM(TRIM(:v_original_ddl), ';'), '.RAW.', '.RAW_HIST.'),
@@ -135,12 +147,15 @@ BEGIN
            ============================================================ */
         v_phase := 'LOAD FROM EX TO EX_HIST';
         CALL ADM.SP_LOAD_TO_HIST(
-            P_PPN_ID => :v_curr_ppn, P_TABLE => :v_table, P_SOURCE_SCHEMA => 'EX', 
+            P_PPN_ID => :v_curr_ppn, P_TABLE => :v_table, P_SOURCE_SCHEMA => 'EX',
             P_SOURCE_ID => :v_source_id, P_RUN_ID => :v_run_id
         ) INTO :v_ex_hist_result;
 
         IF (UPPER(COALESCE(GET(v_ex_hist_result, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
-            v_error_msg := 'SP_LOAD_TO_HIST(EX) returned ERROR: ' || COALESCE(v_ex_hist_result::STRING, '(null)');
+            v_error_source := v_ex_hist_result;
+            v_error_msg := 'SP_LOAD_TO_HIST(EX) failed in phase [' ||
+                           COALESCE(GET(v_ex_hist_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                           COALESCE(GET(v_ex_hist_result, 'message')::STRING, '(no message)');
             RAISE e_failed;
         END IF;
 
@@ -149,12 +164,15 @@ BEGIN
         -- PPN in STG, exactly as production would).
         v_phase := 'LOAD FROM EX TO STG';
         CALL ADM.SP_EX_TO_STG(
-            P_PPN_ID => :v_curr_ppn, P_TABLE => :v_table, P_LOAD_TYPE => :v_load_type, 
+            P_PPN_ID => :v_curr_ppn, P_TABLE => :v_table, P_LOAD_TYPE => :v_load_type,
             P_OTHER => :P_OTHER, P_RUN_ID => :v_run_id, P_SOURCE_ID => :v_source_id
         ) INTO :v_stg_result;
 
         IF (UPPER(COALESCE(GET(v_stg_result, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
-            v_error_msg := 'SP_EX_TO_STG returned ERROR: ' || COALESCE(v_stg_result::STRING, '(null)');
+            v_error_source := v_stg_result;
+            v_error_msg := 'SP_EX_TO_STG failed in phase [' ||
+                           COALESCE(GET(v_stg_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                           COALESCE(GET(v_stg_result, 'message')::STRING, '(no message)');
             RAISE e_failed;
         END IF;
 
@@ -171,17 +189,23 @@ BEGIN
             ROW_COUNT          => GET(:v_stg_result, 'rows_inserted')::NUMBER,
             LOG_MESSAGE        => 'END: Rerun successful.',
             LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                'procedure', 'SP_RERUN_RAW_HIST_TO_STG',
-                'run_id', :v_run_id,
-                'iteration', :v_iter,
-                'load_type', :v_load_type,
-                'stg_result', :v_stg_result
+                'context', OBJECT_CONSTRUCT(
+                    'procedure', 'SP_RERUN_RAW_HIST_TO_STG',
+                    'table', :v_table,
+                    'load_type', :v_load_type,
+                    'iteration', :v_iter,
+                    'ppn_id', :v_curr_ppn,
+                    'run_id', :v_run_id
+                ),
+                'results', OBJECT_CONSTRUCT(
+                    'stg_result', :v_stg_result
+                )
             )::STRING,
             RUN_ID             => :v_run_id
         ) INTO :v_log_rows;
 
     END FOR;
-    
+
     --This is not needed when using temporary view, which is available only for the current session.
     --v_phase := 'RESTORE VIEW';
     --EXECUTE IMMEDIATE :v_original_ddl;
@@ -204,7 +228,7 @@ EXCEPTION
     --    END IF;
 
         LET v_final_msg STRING := COALESCE(v_error_msg, SQLERRM);
-        
+
         BEGIN
             IF (v_ppn_id IS NOT NULL) THEN
                 CALL ADM.SP_WRITE_PPN_LOG(
@@ -219,13 +243,33 @@ EXCEPTION
                     TARGET_OBJECT      => 'STG.' || COALESCE(:v_table, 'UNKNOWN'),
                     ROW_COUNT          => NULL,
                     LOG_MESSAGE        => 'ERROR: Rerun process failed at phase: ' || :v_phase,
+                    /* ERROR block renders FIRST and shows the DEEPEST failure
+                       (child procedure/phase/message/last_sql when a child
+                       failed, own phase otherwise). */
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'failed_phase', :v_phase,
-                        'error_message', :v_final_msg,
-                        'iteration', :v_iter,
-                        'load_type', :v_load_type,
-                        'sqlcode', :SQLCODE,
-                        'sqlerrm', :SQLERRM
+                        'ERROR', OBJECT_CONSTRUCT(
+                            'source_procedure', COALESCE(GET(:v_error_source, 'procedure')::STRING, 'SP_RERUN_RAW_HIST_TO_STG'),
+                            'source_phase',     COALESCE(GET(:v_error_source, 'phase')::STRING, :v_phase),
+                            'message',          :v_final_msg,
+                            'sqlcode',          COALESCE(GET(:v_error_source, 'sqlcode')::NUMBER,
+                                                         IFF(:v_error_msg IS NULL, :SQLCODE, NULL)),
+                            'sqlstate',         COALESCE(GET(:v_error_source, 'sqlstate')::STRING,
+                                                         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)),
+                            'last_sql',         NULLIF(GET(:v_error_source, 'last_sql')::STRING, '')
+                        ),
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_RERUN_RAW_HIST_TO_STG',
+                            'failed_caller_phase', :v_phase,
+                            'table', :v_table,
+                            'load_type', :v_load_type,
+                            'iteration', :v_iter,
+                            'ppn_id', :v_ppn_id,
+                            'run_id', :v_run_id
+                        ),
+                        'results', OBJECT_CONSTRUCT(
+                            'ex_hist_result', :v_ex_hist_result,
+                            'stg_result', :v_stg_result
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;

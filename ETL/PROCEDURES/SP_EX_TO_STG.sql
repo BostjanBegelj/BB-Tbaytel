@@ -1,3 +1,7 @@
+/* ================================================================
+   SP_EX_TO_STG — only LOG_MESSAGE_DETAIL content reorganized.
+   Envelope: ERROR / context / results (ERROR always renders first).
+   ================================================================ */
 CREATE OR REPLACE PROCEDURE ADM.SP_EX_TO_STG(
     "P_PPN_ID"    NUMBER(38,0),
     "P_TABLE"     VARCHAR,
@@ -158,7 +162,11 @@ BEGIN
     v_sync_status := UPPER(COALESCE(GET(v_sync_result, 'status')::STRING, 'ERROR'));
 
     IF (v_sync_status = 'ERROR') THEN
-        v_error_msg := 'Structure sync failed: ' || COALESCE(v_sync_result::STRING, '(no detail)');
+        -- Short, human-readable message; full sync_result is logged as a
+        -- proper nested object in the ERROR log below (no JSON-in-string).
+        v_error_msg := 'SP_SYNC_TABLE_STRUCTURE failed in phase [' ||
+                       COALESCE(GET(v_sync_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                       COALESCE(GET(v_sync_result, 'message')::STRING, '(no detail)');
         RAISE e_failed;
     END IF;
 
@@ -187,15 +195,21 @@ BEGIN
         ROW_COUNT          => :v_sync_change_count,
         LOG_MESSAGE        => :v_sync_log_status || ': Structure sync completed from EX to STG.',
         LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-            'procedure', 'SP_EX_TO_STG',
-            'sync_procedure', 'SP_SYNC_TABLE_STRUCTURE',
-            'sync_scope', 'EX_TO_STG',
-            'table', :v_table,
-            'source_schema', 'EX',
-            'target_schema', 'STG',
-            'sync_log_status', :v_sync_log_status,
-            'sync_change_count', :v_sync_change_count,
-            'sync_result', :v_sync_result
+            'context', OBJECT_CONSTRUCT(
+                'procedure', 'SP_EX_TO_STG',
+                'sync_procedure', 'SP_SYNC_TABLE_STRUCTURE',
+                'sync_scope', 'EX_TO_STG',
+                'table', :v_table,
+                'source_schema', 'EX',
+                'target_schema', 'STG',
+                'ppn_id', :v_ppn_id,
+                'run_id', :v_run_id
+            ),
+            'results', OBJECT_CONSTRUCT(
+                'sync_log_status', :v_sync_log_status,
+                'sync_change_count', :v_sync_change_count,
+                'sync_result', :v_sync_result
+            )
         )::STRING,
         RUN_ID             => :v_run_id
     ) INTO :v_log_rows;
@@ -276,16 +290,23 @@ BEGIN
         ROW_COUNT          => :v_inserted,
         LOG_MESSAGE        => 'SUCCESS: Loaded data from EX to STG.',
         LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-            'procedure', 'SP_EX_TO_STG',
-            'load_type', :v_load_type,
-            'rows_deleted', :v_deleted,
-            'rows_inserted', :v_inserted,
-            'pk', :v_pk,
-            'pk_hk_uses_metadata', FALSE,
-            'hash_exclude', :v_hash_exclude,
-            'partition_column', :v_part_col,
-            'sync_result', :v_sync_result,
-            'last_sql', :v_last_sql
+            'context', OBJECT_CONSTRUCT(
+                'procedure', 'SP_EX_TO_STG',
+                'table', :v_table,
+                'load_type', :v_load_type,
+                'pk', :v_pk,
+                'partition_column', :v_part_col,
+                'ppn_id', :v_ppn_id,
+                'run_id', :v_run_id
+            ),
+            'results', OBJECT_CONSTRUCT(
+                'rows_deleted', :v_deleted,
+                'rows_inserted', :v_inserted,
+                'pk_hk_uses_metadata', FALSE,
+                'hash_exclude', :v_hash_exclude,
+                'sync_result', :v_sync_result,
+                'last_sql', :v_last_sql
+            )
         )::STRING,
         RUN_ID             => :v_run_id
     ) INTO :v_log_rows;
@@ -320,18 +341,30 @@ EXCEPTION
                     TARGET_OBJECT      => :v_target_fq,
                     ROW_COUNT          => NULL,
                     LOG_MESSAGE        => 'ERROR: Failed to load data from EX to STG.',
+                    /* ERROR block renders first in the stored JSON. */
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'procedure', 'SP_EX_TO_STG',
-                        'failed_phase', :v_phase,
-                        'error_message', :v_final_msg,
-                        'sqlcode', :SQLCODE,
-                        'sqlstate', :SQLSTATE,
-                        'sqlerrm', :SQLERRM,
-                        'load_type', :v_load_type,
-                        'rows_deleted', :v_deleted,
-                        'rows_inserted', :v_inserted,
-                        'sync_result', :v_sync_result,
-                        'last_sql', :v_last_sql
+                        'ERROR', OBJECT_CONSTRUCT(
+                            'source_procedure', 'SP_EX_TO_STG',
+                            'source_phase', :v_phase,
+                            'message', :v_final_msg,
+                            'sqlcode', IFF(:v_error_msg IS NULL, :SQLCODE, NULL),
+                            'sqlstate', IFF(:v_error_msg IS NULL, :SQLSTATE, NULL),
+                            'last_sql', NULLIF(:v_last_sql, '')
+                        ),
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_EX_TO_STG',
+                            'table', :v_table,
+                            'load_type', :v_load_type,
+                            'pk', :v_pk,
+                            'partition_column', :v_part_col,
+                            'ppn_id', :v_ppn_id,
+                            'run_id', :v_run_id
+                        ),
+                        'results', OBJECT_CONSTRUCT(
+                            'rows_deleted', :v_deleted,
+                            'rows_inserted', :v_inserted,
+                            'sync_result', :v_sync_result
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;

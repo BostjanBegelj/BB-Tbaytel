@@ -1,3 +1,10 @@
+/* ================================================================
+   SP_LOAD_TO_HIST — only LOG_MESSAGE_DETAIL content reorganized.
+   Envelope: ERROR / context / results (ERROR always renders first).
+   Sync failure no longer concatenates the sync JSON into the message
+   string; the short message is lifted and sync_result stays a proper
+   nested object under results.
+   ================================================================ */
 CREATE OR REPLACE PROCEDURE ADM.SP_LOAD_TO_HIST(
     "P_PPN_ID"        NUMBER(38,0),
     "P_TABLE"         VARCHAR,
@@ -83,7 +90,11 @@ BEGIN
     v_sync_status := UPPER(COALESCE(GET(v_sync_result, 'status')::STRING, 'ERROR'));
 
     IF (v_sync_status = 'ERROR') THEN
-        v_error_msg := 'Structure sync failed: ' || COALESCE(v_sync_result::STRING, '(no detail)');
+        -- Short, human-readable message; full sync_result is logged as a
+        -- proper nested object in the ERROR log below (no JSON-in-string).
+        v_error_msg := 'SP_SYNC_TABLE_STRUCTURE failed in phase [' ||
+                       COALESCE(GET(v_sync_result, 'phase')::STRING, 'UNKNOWN') || ']: ' ||
+                       COALESCE(GET(v_sync_result, 'message')::STRING, '(no detail)');
         RAISE e_failed;
     END IF;
 
@@ -112,15 +123,21 @@ BEGIN
         ROW_COUNT          => :v_sync_change_count,
         LOG_MESSAGE        => :v_sync_log_status || ': Structure sync completed from ' || :v_source_schema || ' to ' || :v_target_schema || '.',
         LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-            'procedure', 'SP_LOAD_TO_HIST',
-            'sync_procedure', 'SP_SYNC_TABLE_STRUCTURE',
-            'sync_scope', :v_source_schema || '_TO_' || :v_target_schema,
-            'table', :v_table,
-            'source_schema', :v_source_schema,
-            'target_schema', :v_target_schema,
-            'sync_log_status', :v_sync_log_status,
-            'sync_change_count', :v_sync_change_count,
-            'sync_result', :v_sync_result
+            'context', OBJECT_CONSTRUCT(
+                'procedure', 'SP_LOAD_TO_HIST',
+                'sync_procedure', 'SP_SYNC_TABLE_STRUCTURE',
+                'sync_scope', :v_source_schema || '_TO_' || :v_target_schema,
+                'table', :v_table,
+                'source_schema', :v_source_schema,
+                'target_schema', :v_target_schema,
+                'ppn_id', :v_ppn_id,
+                'run_id', :v_run_id
+            ),
+            'results', OBJECT_CONSTRUCT(
+                'sync_log_status', :v_sync_log_status,
+                'sync_change_count', :v_sync_change_count,
+                'sync_result', :v_sync_result
+            )
         )::STRING,
         RUN_ID             => :v_run_id
     ) INTO :v_log_rows;
@@ -180,14 +197,20 @@ BEGIN
         ROW_COUNT          => :v_row_count,
         LOG_MESSAGE        => 'SUCCESS: Loaded data from ' || :v_source_schema || ' to ' || :v_target_schema || '.',
         LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-            'procedure', 'SP_LOAD_TO_HIST',
-            'source_schema', :v_source_schema,
-            'target_schema', :v_target_schema,
-            'table', :v_table,
-            'rows_deleted', :v_deleted,
-            'rows_inserted', :v_row_count,
-            'sync_result', :v_sync_result,
-            'last_sql', :v_last_sql
+            'context', OBJECT_CONSTRUCT(
+                'procedure', 'SP_LOAD_TO_HIST',
+                'table', :v_table,
+                'source_schema', :v_source_schema,
+                'target_schema', :v_target_schema,
+                'ppn_id', :v_ppn_id,
+                'run_id', :v_run_id
+            ),
+            'results', OBJECT_CONSTRUCT(
+                'rows_deleted', :v_deleted,
+                'rows_inserted', :v_row_count,
+                'sync_result', :v_sync_result,
+                'last_sql', :v_last_sql
+            )
         )::STRING,
         RUN_ID             => :v_run_id
     ) INTO :v_log_rows;
@@ -222,16 +245,28 @@ EXCEPTION
                     TARGET_OBJECT      => :v_target_fq,
                     ROW_COUNT          => NULL,
                     LOG_MESSAGE        => 'ERROR: Failed to load data from ' || :v_source_schema || ' to ' || :v_target_schema || '.',
+                    /* ERROR block renders first in the stored JSON. */
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'procedure', 'SP_LOAD_TO_HIST',
-                        'failed_phase', :v_phase,
-                        'error_message', :v_final_msg,
-                        'sqlcode', :SQLCODE,
-                        'sqlstate', :SQLSTATE,
-                        'sqlerrm', :SQLERRM,
-                        'rows_deleted', :v_deleted,
-                        'sync_result', :v_sync_result,
-                        'last_sql', :v_last_sql
+                        'ERROR', OBJECT_CONSTRUCT(
+                            'source_procedure', 'SP_LOAD_TO_HIST',
+                            'source_phase', :v_phase,
+                            'message', :v_final_msg,
+                            'sqlcode', IFF(:v_error_msg IS NULL, :SQLCODE, NULL),
+                            'sqlstate', IFF(:v_error_msg IS NULL, :SQLSTATE, NULL),
+                            'last_sql', NULLIF(:v_last_sql, '')
+                        ),
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_LOAD_TO_HIST',
+                            'table', :v_table,
+                            'source_schema', :v_source_schema,
+                            'target_schema', :v_target_schema,
+                            'ppn_id', :v_ppn_id,
+                            'run_id', :v_run_id
+                        ),
+                        'results', OBJECT_CONSTRUCT(
+                            'rows_deleted', :v_deleted,
+                            'sync_result', :v_sync_result
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;

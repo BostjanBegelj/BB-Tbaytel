@@ -1,3 +1,9 @@
+/* ================================================================
+   SP_LANDING_TO_RAW — only LOG_MESSAGE_DETAIL content reorganized.
+   Envelope: ERROR / context / results. Snowflake serializes OBJECT
+   keys alphabetically and uppercase sorts before lowercase, so the
+   ERROR block always renders FIRST in the stored JSON.
+   ================================================================ */
 CREATE OR REPLACE PROCEDURE ADM.SP_LANDING_TO_RAW(
     P_TABLE     VARCHAR,
     P_FILE      VARCHAR,
@@ -14,11 +20,8 @@ AS
 DECLARE
     e_failed EXCEPTION (-20400, 'SP_LANDING_TO_RAW failed.');
 
-    --v_stage_name  STRING DEFAULT '@ADM.EXT_STAGE_ENDUR_SIM/';
-    --v_file_format STRING DEFAULT 'ADM.FILE_FORMAT_CSV_ENDUR_SIM';
     v_stage_name  STRING;
     v_file_format STRING;
-
 
     v_table       STRING DEFAULT UPPER(NULLIF(TRIM(P_TABLE), ''));
     v_file_regex  STRING DEFAULT NULLIF(TRIM(P_FILE), '');
@@ -30,7 +33,7 @@ DECLARE
     v_db          STRING DEFAULT UPPER(CURRENT_DATABASE());
     v_target_fq   STRING;
     v_file_list   STRING;
-    
+
 
     v_ppn_dt      TIMESTAMP_NTZ(9);
     v_ppn_count   NUMBER DEFAULT 0;
@@ -66,7 +69,7 @@ BEGIN
     IF (v_stage_name IS NULL OR v_file_format IS NULL) THEN
         v_error_msg := 'P_OTHER must contain "stage_name" and "file_format" (received: ' || COALESCE(P_OTHER, 'NULL') || ')';
         RAISE e_failed;
-    END IF;    
+    END IF;
 
     /* ============================================================
        2. READ PPN CONTEXT
@@ -201,11 +204,18 @@ BEGIN
         ROW_COUNT          => :v_row_count,
         LOG_MESSAGE        => 'SUCCESS: Loaded data from LANDING to RAW.',
         LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-            'procedure', 'SP_LANDING_TO_RAW',
-            'table', :v_table,
-            'file_pattern', :v_file_regex,
-            'files_used_for_infer_schema', :v_file_list,
-            'last_sql', :v_last_sql
+            'context', OBJECT_CONSTRUCT(
+                'procedure', 'SP_LANDING_TO_RAW',
+                'table', :v_table,
+                'file_pattern', :v_file_regex,
+                'ppn_id', :v_ppn_id,
+                'run_id', :v_run_id
+            ),
+            'results', OBJECT_CONSTRUCT(
+                'files_used_for_infer_schema', :v_file_list,
+                'rows_loaded', :v_row_count,
+                'last_sql', :v_last_sql
+            )
         )::STRING,
         RUN_ID             => :v_run_id
     ) INTO :v_log_rows;
@@ -238,14 +248,28 @@ EXCEPTION
                     TARGET_OBJECT      => :v_target_fq,
                     ROW_COUNT          => NULL,
                     LOG_MESSAGE        => 'ERROR: Failed to load data from LANDING to RAW.',
+                    /* ERROR block renders first in the stored JSON.
+                       sqlcode/sqlstate are logged only for real engine
+                       errors (v_error_msg IS NULL); for controlled RAISE
+                       e_failed they would just repeat the wrapper (-20400)
+                       and are omitted (OBJECT_CONSTRUCT drops NULLs).
+                       sqlerrm removed: always duplicated message/wrapper. */
                     LOG_MESSAGE_DETAIL => OBJECT_CONSTRUCT(
-                        'procedure', 'SP_LANDING_TO_RAW',
-                        'failed_phase', :v_phase,
-                        'error_message', :v_final_msg,
-                        'sqlcode', :SQLCODE,
-                        'sqlstate', :SQLSTATE,
-                        'sqlerrm', :SQLERRM,
-                        'last_sql', :v_last_sql
+                        'ERROR', OBJECT_CONSTRUCT(
+                            'source_procedure', 'SP_LANDING_TO_RAW',
+                            'source_phase', :v_phase,
+                            'message', :v_final_msg,
+                            'sqlcode', IFF(:v_error_msg IS NULL, :SQLCODE, NULL),
+                            'sqlstate', IFF(:v_error_msg IS NULL, :SQLSTATE, NULL),
+                            'last_sql', NULLIF(:v_last_sql, '')
+                        ),
+                        'context', OBJECT_CONSTRUCT(
+                            'procedure', 'SP_LANDING_TO_RAW',
+                            'table', :v_table,
+                            'file_pattern', :v_file_regex,
+                            'ppn_id', :v_ppn_id,
+                            'run_id', :v_run_id
+                        )
                     )::STRING,
                     RUN_ID             => :v_run_id
                 ) INTO :v_log_rows;
