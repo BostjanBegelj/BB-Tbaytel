@@ -28,13 +28,13 @@
 --   - restrict via network policy and audit its usage.
 -- ------------------------------------------------------------
 
--- USE ROLE USERADMIN;
--- CREATE USER IF NOT EXISTS BREAKGLASS_ADMIN
---     LOGIN_NAME           = 'BREAKGLASS_ADMIN'
---     DISPLAY_NAME         = 'Break-glass administrator'
---     PASSWORD             = '<STRONG_RANDOM_ONE_TIME_PASSWORD>'
---     MUST_CHANGE_PASSWORD = TRUE
---     COMMENT              = 'Emergency access only - audited';
---
--- USE ROLE SECURITYADMIN;
--- GRANT ROLE ACCOUNTADMIN TO USER BREAKGLASS_ADMIN;
+ USE ROLE USERADMIN;
+ CREATE USER IF NOT EXISTS BREAKGLASS_ADMIN
+     LOGIN_NAME           = 'BREAKGLASS_ADMIN'
+     DISPLAY_NAME         = 'Break-glass administrator'
+     PASSWORD             = '<STRONG_RANDOM_ONE_TIME_PASSWORD>'
+     MUST_CHANGE_PASSWORD = TRUE
+     COMMENT              = 'Emergency access only - audited';
+
+ USE ROLE SECURITYADMIN;
+ GRANT ROLE ACCOUNTADMIN TO USER BREAKGLASS_ADMIN;
