@@ -14,6 +14,11 @@
 --        Role:      <ENV>_REPORTER   (sees GOLD and all GOLD_* schemas)
 --        Warehouse: <ENV>_REPORTER_WH
 --
+--   3. Deployment (CI/CD - schemachange/dbt)
+--        User:      SVC_<ENV>_DEPLOY
+--        Role:      <ENV>_DEPLOYER   (FULL on env schemas; reads git repos)
+--        Warehouse: <ENV>_DEPLOYER_WH
+--
 -- Note: the general <ENV>_REPORTER role is used by this Power BI
 -- SERVICE user (broad read across GOLD + GOLD_*). The per-domain
 -- <ENV>_REPORTER_BILLING / _FINANCE / _MARKETING roles are for
@@ -39,6 +44,11 @@ SET SVC_PBI_USER  = 'SVC_' || $ENV_ABBR || 'POWERBI';
 SET PBI_ROLE      = $ENV_ABBR || 'REPORTER';
 SET PBI_WAREHOUSE = $ENV_ABBR || 'REPORTER_WH';
 
+-- Deployment (CI/CD)
+SET SVC_DEPLOY_USER  = 'SVC_' || $ENV_ABBR || 'DEPLOY';
+SET DEPLOY_ROLE      = $ENV_ABBR || 'DEPLOYER';
+SET DEPLOY_WAREHOUSE = $ENV_ABBR || 'DEPLOYER_WH';
+
 
 -- ============================================================
 -- CREATE SERVICE USERS
@@ -63,6 +73,15 @@ CREATE USER IF NOT EXISTS IDENTIFIER($SVC_PBI_USER)
     DEFAULT_WAREHOUSE = $PBI_WAREHOUSE
 ;
 
+CREATE USER IF NOT EXISTS IDENTIFIER($SVC_DEPLOY_USER)
+    LOGIN_NAME        = $SVC_DEPLOY_USER
+    DISPLAY_NAME      = 'CI/CD deployment'
+    TYPE              = 'SERVICE'
+    COMMENT           = 'Environment deployment service user (schemachange/dbt) - key-pair auth only'
+    DEFAULT_ROLE      = $DEPLOY_ROLE
+    DEFAULT_WAREHOUSE = $DEPLOY_WAREHOUSE
+;
+
 
 -- ============================================================
 -- GRANT ROLES  (DEFAULT_ROLE does not grant the role).
@@ -70,8 +89,9 @@ CREATE USER IF NOT EXISTS IDENTIFIER($SVC_PBI_USER)
 -- ============================================================
 USE ROLE IDENTIFIER($ENV_USERADMIN);
 
-GRANT ROLE IDENTIFIER($ADF_ROLE) TO USER IDENTIFIER($SVC_ADF_USER);
-GRANT ROLE IDENTIFIER($PBI_ROLE) TO USER IDENTIFIER($SVC_PBI_USER);
+GRANT ROLE IDENTIFIER($ADF_ROLE)    TO USER IDENTIFIER($SVC_ADF_USER);
+GRANT ROLE IDENTIFIER($PBI_ROLE)    TO USER IDENTIFIER($SVC_PBI_USER);
+GRANT ROLE IDENTIFIER($DEPLOY_ROLE) TO USER IDENTIFIER($SVC_DEPLOY_USER);
 
 
 -- ============================================================
@@ -79,7 +99,8 @@ GRANT ROLE IDENTIFIER($PBI_ROLE) TO USER IDENTIFIER($SVC_PBI_USER);
 -- Base64 body only: no -----BEGIN/END----- lines, no line breaks.
 -- Use a SEPARATE key pair per user. Store private keys only in the
 -- secure secret store (ADF -> Azure Key Vault; Power BI -> its
--- gateway/service credential store). Uncomment when keys exist.
+-- gateway/service credential store; deploy -> CI/CD secret store).
+-- Uncomment when keys exist.
 -- ============================================================
 USE ROLE USERADMIN;
 
@@ -93,6 +114,11 @@ USE ROLE USERADMIN;
 -- ALTER USER IDENTIFIER($SVC_PBI_USER)
 --     SET RSA_PUBLIC_KEY = $PBI_RSA_PUBLIC_KEY;
 
+-- Deployment
+-- SET DEPLOY_RSA_PUBLIC_KEY = '<DEPLOY_RSA_PUBLIC_KEY_BODY>';
+-- ALTER USER IDENTIFIER($SVC_DEPLOY_USER)
+--     SET RSA_PUBLIC_KEY = $DEPLOY_RSA_PUBLIC_KEY;
+
 
 -- ============================================================
 -- VALIDATION
@@ -100,7 +126,9 @@ USE ROLE USERADMIN;
 USE ROLE USERADMIN;
 DESCRIBE USER IDENTIFIER($SVC_ADF_USER);
 DESCRIBE USER IDENTIFIER($SVC_PBI_USER);
+DESCRIBE USER IDENTIFIER($SVC_DEPLOY_USER);
 
 USE ROLE SECURITYADMIN;
 SHOW GRANTS TO USER IDENTIFIER($SVC_ADF_USER);
 SHOW GRANTS TO USER IDENTIFIER($SVC_PBI_USER);
+SHOW GRANTS TO USER IDENTIFIER($SVC_DEPLOY_USER);

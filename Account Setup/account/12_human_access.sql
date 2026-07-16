@@ -8,7 +8,7 @@
 -- groups, so NO "CREATE USER ... PASSWORD" statements belong here.
 --
 -- Only SERVICE users are created in SQL, with key-pair auth:
---   - SVC_TERRAFORM        (account/04_svc_terraform_user.sql)
+--   - SVC_TERRAFORM        (account/11_terraform_service_user.sql)
 --   - SVC_<ENV>_ADF        (environment/05_environment_service_users.sql)
 --
 -- SSO / SCIM setup itself (SAML2 security integration + SCIM

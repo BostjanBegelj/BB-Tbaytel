@@ -3,7 +3,7 @@
 -- RUN ONCE PER ACCOUNT.
 --
 -- Prerequisites:
---   - TERRAFORM_ADMIN exists (account/03_terraform_admin_role.sql)
+--   - TERRAFORM_ADMIN exists (account/10_terraform_admin_role.sql)
 --   - PLATFORM_WH exists (account/02_platform_database.sql)
 --
 -- TYPE = SERVICE, key-pair authentication only, no password.

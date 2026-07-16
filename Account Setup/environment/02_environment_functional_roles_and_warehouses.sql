@@ -12,6 +12,10 @@
 --   REPORTER_FINANCE    finance reporting (Power BI DirectQuery SSO)
 --   REPORTER_MARKETING  marketing reporting (Power BI DirectQuery SSO)
 --   IT_GOVERNANCE       governance / monitoring / admin reporting
+--   DEPLOYER            CI/CD deployment (schemachange/dbt) - applies
+--                       DDL to the env schemas; reads the git repos in
+--                       PLATFORM_DB.DEPLOYMENT. Distinct from TRANSFORMER
+--                       (interactive) and TERRAFORM_ADMIN (account-level).
 -- ============================================================
 SET ENV_ABBR = 'DEV_';
 
@@ -34,6 +38,8 @@ SET ENV_REPORTER_MARKETING = $ENV_ABBR || 'REPORTER_MARKETING';
 SET ENV_REPORTER_MARKETING_WH = $ENV_ABBR || 'REPORTER_MARKETING_WH';
 SET ENV_IT_GOVERNANCE      = $ENV_ABBR || 'IT_GOVERNANCE';
 SET ENV_IT_GOVERNANCE_WH   = $ENV_ABBR || 'IT_GOVERNANCE_WH';
+SET ENV_DEPLOYER           = $ENV_ABBR || 'DEPLOYER';
+SET ENV_DEPLOYER_WH        = $ENV_ABBR || 'DEPLOYER_WH';
 
 
 -- ============================================================
@@ -57,8 +63,7 @@ GRANT ROLE IDENTIFIER($ENV_REPORTER) TO ROLE IDENTIFIER($ENV_SYSADMIN);
 -- NOTE on hierarchy: the three domain reporters are granted to
 -- ENV_SYSADMIN for management only (matching the original design).
 -- They are NOT granted to the general REPORTER, and REPORTER is NOT
--- granted to them. See README "Open design point: reporter isolation"
--- for the recommended hierarchical alternative.
+-- granted to them. See README "Reporter model" for the rationale.
 CREATE ROLE IF NOT EXISTS IDENTIFIER($ENV_REPORTER_BILLING);
 GRANT ROLE IDENTIFIER($ENV_REPORTER_BILLING) TO ROLE IDENTIFIER($ENV_SYSADMIN);
 
@@ -70,6 +75,9 @@ GRANT ROLE IDENTIFIER($ENV_REPORTER_MARKETING) TO ROLE IDENTIFIER($ENV_SYSADMIN)
 
 CREATE ROLE IF NOT EXISTS IDENTIFIER($ENV_IT_GOVERNANCE);
 GRANT ROLE IDENTIFIER($ENV_IT_GOVERNANCE) TO ROLE IDENTIFIER($ENV_SYSADMIN);
+
+CREATE ROLE IF NOT EXISTS IDENTIFIER($ENV_DEPLOYER);
+GRANT ROLE IDENTIFIER($ENV_DEPLOYER) TO ROLE IDENTIFIER($ENV_SYSADMIN);
 
 
 -- ============================================================
@@ -117,3 +125,23 @@ CREATE WAREHOUSE IF NOT EXISTS IDENTIFIER($ENV_IT_GOVERNANCE_WH)
     WAREHOUSE_TYPE = STANDARD WAREHOUSE_SIZE = XSMALL
     AUTO_SUSPEND = 60 AUTO_RESUME = TRUE INITIALLY_SUSPENDED = TRUE;
 GRANT USAGE ON WAREHOUSE IDENTIFIER($ENV_IT_GOVERNANCE_WH) TO ROLE IDENTIFIER($ENV_IT_GOVERNANCE);
+
+CREATE WAREHOUSE IF NOT EXISTS IDENTIFIER($ENV_DEPLOYER_WH)
+    WAREHOUSE_TYPE = STANDARD WAREHOUSE_SIZE = XSMALL
+    AUTO_SUSPEND = 60 AUTO_RESUME = TRUE INITIALLY_SUSPENDED = TRUE;
+GRANT USAGE ON WAREHOUSE IDENTIFIER($ENV_DEPLOYER_WH) TO ROLE IDENTIFIER($ENV_DEPLOYER);
+
+
+-- ============================================================
+-- DEPLOYER - read access to the CI/CD git repositories.
+-- The git repos live in PLATFORM_DB.DEPLOYMENT (account-wide, created
+-- in account/13-14). SYSADMIN owns that schema, so it grants the read.
+-- Schema-level FULL access on the env schemas is granted in step 04.
+-- (Verify the ALL/FUTURE GIT REPOSITORIES grant grammar against
+-- current Snowflake docs; grant per-repo if the bulk form is rejected.)
+-- ============================================================
+USE ROLE SYSADMIN;
+GRANT USAGE ON DATABASE PLATFORM_DB              TO ROLE IDENTIFIER($ENV_DEPLOYER);
+GRANT USAGE ON SCHEMA   PLATFORM_DB.DEPLOYMENT   TO ROLE IDENTIFIER($ENV_DEPLOYER);
+GRANT USAGE ON ALL    GIT REPOSITORIES IN SCHEMA PLATFORM_DB.DEPLOYMENT TO ROLE IDENTIFIER($ENV_DEPLOYER);
+GRANT USAGE ON FUTURE GIT REPOSITORIES IN SCHEMA PLATFORM_DB.DEPLOYMENT TO ROLE IDENTIFIER($ENV_DEPLOYER);

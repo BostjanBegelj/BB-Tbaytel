@@ -65,10 +65,10 @@ option — they need your own tenant/org plus credentials.
 | # | File | Creates |
 |---|------|---------|
 | 01 | `01_environment_admin_roles.sql` | `{ENV}_SYSADMIN`, `{ENV}_USERADMIN`, their account grants, **and platform provisioning access** (usage on `PLATFORM_WH`/`PLATFORM_DB`/`RBAC`/procs) |
-| 02 | `02_environment_functional_roles_and_warehouses.sql` | 8 functional roles + one warehouse each |
+| 02 | `02_environment_functional_roles_and_warehouses.sql` | 9 functional roles incl. `DEPLOYER` (CI/CD) + one warehouse each; `DEPLOYER` also gets read on the git repos in `PLATFORM_DB.DEPLOYMENT` |
 | 03 | `03_environment_database.sql` | `{ENV}_DB` (via `CREATE_DATABASE`) |
 | 04 | `04_environment_schemas.sql` | 9 medallion schemas + retention tiers + RO/FULL role grants |
-| 05 | `05_environment_service_users.sql` | `SVC_{ENV}_ADF` (role `{ENV}_DATA_LOADER`) and `SVC_{ENV}_POWERBI` (role `{ENV}_REPORTER`) — both key-pair |
+| 05 | `05_environment_service_users.sql` | `SVC_{ENV}_ADF` (`{ENV}_DATA_LOADER`), `SVC_{ENV}_POWERBI` (`{ENV}_REPORTER`), `SVC_{ENV}_DEPLOY` (`{ENV}_DEPLOYER`) — all key-pair |
 
 ### 3. validation/ (run after each deployment)
 
@@ -90,6 +90,7 @@ grant views can lag by up to ~2 hours.
   people and map Entra groups to functional roles. Only `SVC_` users
   are created in SQL (key-pair auth).
 - **Retention tiers** are set per schema in `04` — adjust to policy.
+- **Deployment role:** `{ENV}_DEPLOYER` (used by `SVC_{ENV}_DEPLOY`) runs CI/CD (schemachange/dbt) — FULL on the env schemas + read on the git repos in `PLATFORM_DB.DEPLOYMENT`, with its own warehouse. Kept separate from `TRANSFORMER` (interactive engineering) and `TERRAFORM_ADMIN` (account-level infra).
 
 ## Reporter model (by design)
 
