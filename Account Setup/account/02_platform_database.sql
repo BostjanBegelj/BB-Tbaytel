@@ -47,6 +47,8 @@ CREATE SCHEMA IF NOT EXISTS UTIL WITH MANAGED ACCESS
   COMMENT = 'Shared, environment-neutral helper functions (UDFs/UDTFs)';
 CREATE SCHEMA IF NOT EXISTS REFERENCE WITH MANAGED ACCESS
   COMMENT = 'Environment-neutral static reference/lookup data (read-only to runtime)';
+CREATE SCHEMA IF NOT EXISTS FILE_FORMATS WITH MANAGED ACCESS
+  COMMENT = 'Shared, environment-independent file formats (Parquet, CSV, JSON, ...)';
 CREATE SCHEMA IF NOT EXISTS SHARED_WORKSPACE WITH MANAGED ACCESS
   COMMENT = 'Admin/engineer cross-environment scratch and collaboration area';
 

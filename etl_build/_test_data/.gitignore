@@ -1,0 +1,2 @@
+# Generated binary test fixtures — reproduce with generate_test_parquet.py
+*.parquet
