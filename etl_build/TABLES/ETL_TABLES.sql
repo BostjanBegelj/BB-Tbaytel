@@ -27,10 +27,10 @@ create or replace table adm.etl_tables (
 ) comment = 'Config: per-table load control list (ETL_ prefix).';
 
 -- Example seed (uncomment / adjust):
--- insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns, watermark_column, target_schema, load_order) values
---   ('BSS_ORA','CUSTOMER',     '.*CUSTOMER_.*\\.parquet',     'FULL', 'CUSTOMER_ID', null,       'BRONZE', 10),
---   ('BSS_ORA','SERVICE_PLAN', '.*SERVICE_PLAN_.*\\.parquet', 'FULL', 'PLAN_ID',     null,       'BRONZE', 20),
---   ('BSS_ORA','USAGE_DAILY',  '.*USAGE_DAILY_.*\\.parquet',  'INCR', 'USAGE_ID',    'EVENT_TS',  'BRONZE', 30);
--- insert into adm.etl_tables (source_id, table_name, source_object, load_type, pk_columns, watermark_column, target_schema, load_order) values
---   ('WHOLESALE','PARTNER_ACCOUNT','WHOLESALE.PARTNER_ACCOUNT','FULL','ACCOUNT_ID','MODIFIED_TS','BRONZE',10),
---   ('WHOLESALE','WHOLESALE_USAGE','WHOLESALE.WHOLESALE_USAGE','INCR','USAGE_ID',  'MODIFIED_TS','BRONZE',20);
+ insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns, watermark_column, target_schema, load_order) values
+   ('BSS_ORA','CUSTOMER',     '.*CUSTOMER_.*\\.parquet',     'FULL', 'CUSTOMER_ID', null,       'BRONZE', 10),
+   ('BSS_ORA','SERVICE_PLAN', '.*SERVICE_PLAN_.*\\.parquet', 'FULL', 'PLAN_ID',     null,       'BRONZE', 20),
+   ('BSS_ORA','USAGE_DAILY',  '.*USAGE_DAILY_.*\\.parquet',  'INCR', 'USAGE_ID',    'EVENT_TS',  'BRONZE', 30);
+ insert into adm.etl_tables (source_id, table_name, source_object, load_type, pk_columns, watermark_column, target_schema, load_order) values
+   ('WHOLESALE','PARTNER_ACCOUNT','WHOLESALE.PARTNER_ACCOUNT','FULL','ACCOUNT_ID','MODIFIED_TS','BRONZE',10),
+   ('WHOLESALE','WHOLESALE_USAGE','WHOLESALE.WHOLESALE_USAGE','INCR','USAGE_ID',  'MODIFIED_TS','BRONZE',20);

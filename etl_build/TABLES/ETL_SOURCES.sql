@@ -22,6 +22,6 @@ create or replace table adm.etl_sources (
 ) comment = 'Config: registry of source systems and their load pattern (ETL_ prefix).';
 
 -- Example seed (uncomment / adjust; real seed is build step 9):
--- insert into adm.etl_sources (source_id, source_name, source_type, stage_name, share_db, file_format) values
---   ('BSS_ORA',   'Billing/CRM (Oracle)',           'PARQUET',   '@DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/', null,           'PLATFORM_DB.FILE_FORMATS.FF_PARQUET'),
---   ('WHOLESALE', 'Partner wholesale (Data Share)', 'DATASHARE', null,                                   'SHARE_SIM_DB', null);
+ insert into adm.etl_sources (source_id, source_name, source_type, stage_name, share_db, file_format) values
+   ('BSS_ORA',   'Billing/CRM (Oracle)',           'PARQUET',   '@DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/', null,           'PLATFORM_DB.FILE_FORMATS.FF_PARQUET'),
+   ('WHOLESALE', 'Partner wholesale (Data Share)', 'DATASHARE', null,                                   'SHARE_SIM_DB', null);
