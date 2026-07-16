@@ -1,6 +1,6 @@
 """
 Generate deterministic test Parquet files for technically exercising the Tbaytel
-ETL procedures against INT_STAGE_AZURE (internal stand-in for the Azure Blob stage).
+ETL procedures against DEV_DB.ADM.EXT_STAGE_AZURE (internal stand-in for the Azure Blob stage).
 
 Design goals
   * Type coverage: int64/int32, string, bool, date, timestamp, decimal, and NULLs

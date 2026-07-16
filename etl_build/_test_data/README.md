@@ -1,7 +1,7 @@
 # ETL test data (synthetic Parquet)
 
 Small synthetic dataset for **technically** exercising the ETL procedures against
-`DEV_DB.ADM.INT_STAGE_AZURE` (the internal stand-in for the Azure Blob stage).
+`DEV_DB.ADM.EXT_STAGE_AZURE` (the internal stand-in for the Azure Blob stage).
 Not real data. Regenerate any time with:
 
 ```
@@ -29,7 +29,7 @@ Three load dates: `2026-07-01`, `2026-07-02`, `2026-07-03`.
 
 Row counts: CUSTOMER 5/6/5, SERVICE_PLAN 4/4/5, USAGE_DAILY 6/6/6.
 
-With `PLATFORM_DB.FILE_FORMATS.FILE_FORMAT_PARQUET` (`use_logical_type=true`) these
+With `PLATFORM_DB.FILE_FORMATS.FF_PARQUET` (`use_logical_type=true`) these
 land in Snowflake as NUMBER / VARCHAR / BOOLEAN / DATE / TIMESTAMP_NTZ, decimals as
 NUMBER(p,s). The snapshot changes let you test compare/CDC, history, and IS_DELETED.
 
@@ -40,25 +40,25 @@ NUMBER(p,s). The snapshot changes let you test compare/CDC, history, and IS_DELE
 ```sql
 -- 1) Upload one table+date (repeat per folder). auto_compress=false: Parquet is already compressed.
 PUT file://C:/repo/BB-Tbaytel/BB-Tbaytel/etl_build/_test_data/BSS_ORA/CUSTOMER/load_date=2026-07-01/*.parquet
-    @DEV_DB.ADM.INT_STAGE_AZURE/BSS_ORA/CUSTOMER/load_date=2026-07-01/
+    @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/CUSTOMER/load_date=2026-07-01/
     AUTO_COMPRESS = FALSE OVERWRITE = TRUE;
 
 -- Bulk upload everything at once (recursive keeps the folder structure):
---   PUT file://C:/repo/BB-Tbaytel/BB-Tbaytel/etl_build/_test_data/BSS_ORA/ @DEV_DB.ADM.INT_STAGE_AZURE/BSS_ORA/ AUTO_COMPRESS=FALSE OVERWRITE=TRUE;
+--   PUT file://C:/repo/BB-Tbaytel/BB-Tbaytel/etl_build/_test_data/BSS_ORA/ @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/ AUTO_COMPRESS=FALSE OVERWRITE=TRUE;
 
 -- 2) Inspect
-LIST @DEV_DB.ADM.INT_STAGE_AZURE/BSS_ORA/CUSTOMER/;
+LIST @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/CUSTOMER/;
 
 -- 3) Infer schema (what the load proc uses to build/sync RAW DDL)
 SELECT *
 FROM TABLE(INFER_SCHEMA(
-    LOCATION    => '@DEV_DB.ADM.INT_STAGE_AZURE/BSS_ORA/CUSTOMER/load_date=2026-07-01/',
-    FILE_FORMAT => 'PLATFORM_DB.FILE_FORMATS.FILE_FORMAT_PARQUET'));
+    LOCATION    => '@DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/CUSTOMER/load_date=2026-07-01/',
+    FILE_FORMAT => 'PLATFORM_DB.FILE_FORMATS.FF_PARQUET'));
 
 -- 4) Load one snapshot (match by column name)
 COPY INTO DEV_DB.RAW.CUSTOMER
-    FROM @DEV_DB.ADM.INT_STAGE_AZURE/BSS_ORA/CUSTOMER/load_date=2026-07-01/
-    FILE_FORMAT = (FORMAT_NAME = 'PLATFORM_DB.FILE_FORMATS.FILE_FORMAT_PARQUET')
+    FROM @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/CUSTOMER/load_date=2026-07-01/
+    FILE_FORMAT = (FORMAT_NAME = 'PLATFORM_DB.FILE_FORMATS.FF_PARQUET')
     MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
     ON_ERROR = ABORT_STATEMENT;
 ```
