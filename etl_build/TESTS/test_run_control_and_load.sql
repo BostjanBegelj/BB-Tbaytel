@@ -1,0 +1,88 @@
+-- =============================================================================
+-- Manual smoke test for the run-control + Parquet-load procedures.
+-- Prereqs (run once, in order):
+--   1. TABLES:      ETL_SOURCES, ETL_TABLES, PPN, PPN_PROCESS, PPN_LOG
+--   2. PROCEDURES:  SP_LOG_STEP, SP_SET_PROCESS_STATE, SP_CREATE_PPN,
+--                   SP_CLOSE_PPN, SP_VALIDATE_CONFIG, SP_LOAD_FILE_TO_BRONZE
+--   3. SEED:        SEED/seed_config_dev.sql
+--   4. Parquet test files uploaded under @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/...
+-- Run as an owner/privileged role (procs are EXECUTE AS CALLER).
+-- =============================================================================
+use role dev_sysadmin;
+-- use warehouse <your_wh>;          -- set your dev warehouse
+use database dev_db;
+use schema adm;
+
+-- Optional: confirm the stage sees your files first.
+LIST @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/;
+
+-- =============================================================================
+-- TEST 1 — SP_CREATE_PPN  (allocate a run; capture PPN_ID into a session var)
+-- =============================================================================
+CALL ADM.SP_CREATE_PPN('test-run-001');
+SET PPN_ID = (SELECT "PPN_ID" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
+SELECT $PPN_ID AS PPN_ID;
+SELECT * FROM ADM.PPN WHERE PPN_ID = $PPN_ID;           -- expect STATUS=RUNNING, START_TS set
+
+-- =============================================================================
+-- TEST 2 — SP_VALIDATE_CONFIG  (positive: seeded config should be valid)
+-- =============================================================================
+CALL ADM.SP_VALIDATE_CONFIG(P_PPN_ID => $PPN_ID, P_RUN_ID => 'test-run-001');
+SELECT PHASE, STATUS, MESSAGE FROM ADM.PPN_LOG
+ WHERE PPN_ID = $PPN_ID AND PHASE = 'VALIDATE_CONFIG';   -- expect SUCCESS
+
+-- =============================================================================
+-- TEST 3 — SP_LOAD_FILE_TO_BRONZE  (the three BSS_ORA Parquet tables)
+-- =============================================================================
+CALL ADM.SP_LOAD_FILE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'CUSTOMER',     P_RUN_ID => 'test-run-001');
+CALL ADM.SP_LOAD_FILE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'SERVICE_PLAN', P_RUN_ID => 'test-run-001');
+CALL ADM.SP_LOAD_FILE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'USAGE_DAILY',  P_RUN_ID => 'test-run-001');
+
+-- Inspect the landed data + lineage columns
+SELECT * FROM DEV_DB.BRONZE.CUSTOMER;
+SELECT COUNT(*) AS rows_loaded, COUNT(DISTINCT METADATA$FILENAME) AS files, MAX(PPN_ID) AS ppn
+  FROM DEV_DB.BRONZE.CUSTOMER;
+
+-- Inspect state + log for this run
+SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, START_TS, END_TS
+  FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN_ID ORDER BY TABLE_NAME;
+SELECT PHASE, STATUS, TABLE_NAME, ROW_COUNT, DURATION_MSEC, MESSAGE
+  FROM ADM.PPN_LOG WHERE PPN_ID = $PPN_ID ORDER BY LOG_ID;
+
+-- =============================================================================
+-- TEST 4 — negative: PARQUET loader against a DATASHARE source (expect ERROR obj)
+--   Returns status=ERROR with a clear message; no SP_LOAD_SHARE_TO_BRONZE yet.
+-- =============================================================================
+CALL ADM.SP_LOAD_FILE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
+
+-- =============================================================================
+-- TEST 5 — SP_SET_PROCESS_STATE  (helper, direct: upsert then verify)
+-- =============================================================================
+CALL ADM.SP_SET_PROCESS_STATE(
+    P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'MANUAL_TEST',
+    P_STATUS => 'SUCCESS', P_PHASE => 'MANUAL', P_ROWS_EXTRACTED => 42, P_SET_END => TRUE);
+SELECT * FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN_ID AND TABLE_NAME = 'MANUAL_TEST';
+
+-- =============================================================================
+-- TEST 6 — SP_LOG_STEP  (helper, direct: write one log row then verify)
+-- =============================================================================
+CALL ADM.SP_LOG_STEP(
+    P_PPN_ID => $PPN_ID, P_PHASE => 'MANUAL', P_STATUS => 'SUCCESS',
+    P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'MANUAL_TEST',
+    P_ROW_COUNT => 42, P_MESSAGE => 'manual log-step test', P_RUN_ID => 'test-run-001');
+SELECT * FROM ADM.PPN_LOG WHERE PPN_ID = $PPN_ID AND PHASE = 'MANUAL' ORDER BY LOG_ID DESC LIMIT 1;
+
+-- =============================================================================
+-- TEST 7 — SP_CLOSE_PPN  (finalise the run)
+-- =============================================================================
+CALL ADM.SP_CLOSE_PPN(P_PPN_ID => $PPN_ID, P_STATUS => 'SUCCESS', P_RUN_ID => 'test-run-001');
+SELECT PPN_ID, STATUS, START_TS, END_TS FROM ADM.PPN WHERE PPN_ID = $PPN_ID;   -- STATUS=SUCCESS, END_TS set
+SELECT PHASE, STATUS, MESSAGE FROM ADM.PPN_LOG WHERE PPN_ID = $PPN_ID AND PHASE = 'CLOSE_PPN';
+
+-- =============================================================================
+-- OPTIONAL — negative validation test (breaks config, expects raise, then fixes)
+-- =============================================================================
+-- UPDATE ADM.ETL_TABLES SET pk_columns = NULL WHERE source_id='BSS_ORA' AND table_name='USAGE_DAILY';  -- INCR w/o PK
+-- CALL ADM.SP_VALIDATE_CONFIG(P_PPN_ID => $PPN_ID, P_RUN_ID => 'test-run-001');   -- expect an error is raised
+-- SELECT DETAIL_JSON FROM ADM.PPN_LOG WHERE PPN_ID = $PPN_ID AND PHASE='VALIDATE_CONFIG' ORDER BY LOG_ID DESC LIMIT 1;
+-- UPDATE ADM.ETL_TABLES SET pk_columns = 'USAGE_ID' WHERE source_id='BSS_ORA' AND table_name='USAGE_DAILY';  -- restore
