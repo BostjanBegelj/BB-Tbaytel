@@ -1,6 +1,7 @@
 -- ADM.SP_CREATE_PPN - allocate a new PPN_ID + PPN_TIMESTAMP from the sequence and
--- insert the run header into ADM.PPN (STATUS = RUNNING). Returns the new PPN so ADF
--- can carry PPN_ID for the whole run. First step of every run.
+-- insert the run header into ADM.PPN (STATUS = RUNNING). Captures ADF's RUN_ID once
+-- into ADM.PPN; downstream procedures use PPN_ID only (RUN_ID is resolved from PPN).
+-- Returns the new PPN. First step of every run.
 -- Core insert has NO handler: a real failure propagates as a hard error (no sentinel).
 
 use role dev_sysadmin;
@@ -12,7 +13,7 @@ CREATE OR REPLACE PROCEDURE ADM.SP_CREATE_PPN(
 )
 RETURNS TABLE (STATUS TEXT, PPN_ID NUMBER(38,0), PPN_TIMESTAMP TIMESTAMP_NTZ(9))
 LANGUAGE SQL
-COMMENT = 'Allocate PPN_ID + PPN_TIMESTAMP; insert the ADM.PPN run header (RUNNING). Returns the new PPN.'
+COMMENT = 'Allocate PPN_ID + PPN_TIMESTAMP; insert the ADM.PPN run header (RUNNING) with RUN_ID. Returns the new PPN.'
 EXECUTE AS CALLER
 AS
 DECLARE
@@ -38,9 +39,8 @@ BEGIN
             P_LOG_END     => :v_ppn_ts,
             P_MESSAGE     => 'START: run created.',
             P_DETAIL_JSON => OBJECT_CONSTRUCT(
-                'context', OBJECT_CONSTRUCT('procedure','SP_CREATE_PPN','ppn_id',:v_ppn_id,'run_id',:v_run_id)
-            )::STRING,
-            P_RUN_ID      => :v_run_id
+                'context', OBJECT_CONSTRUCT('procedure','SP_CREATE_PPN','ppn_id',:v_ppn_id)
+            )::STRING
         ) INTO :v_log_rows;
     EXCEPTION
         WHEN OTHER THEN NULL;

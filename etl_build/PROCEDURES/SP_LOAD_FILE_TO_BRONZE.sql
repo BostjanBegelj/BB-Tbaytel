@@ -4,6 +4,7 @@
 -- so it runs standalone (no orchestrator needed) and is called per-table later.
 -- Single responsibility = land the file(s). Schema handling is Snowflake-native
 -- (INFER_SCHEMA + ENABLE_SCHEMA_EVOLUTION); "skip identical" is a separate proc (deferred).
+-- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 -- Child pattern: on failure it logs + sets ERROR state and RETURNS an error object
 -- (the orchestrator decides whether to raise), matching the reference framework.
 
@@ -14,8 +15,7 @@ use schema adm;
 CREATE OR REPLACE PROCEDURE ADM.SP_LOAD_FILE_TO_BRONZE(
     "P_PPN_ID"     NUMBER(38,0),
     "P_SOURCE_ID"  VARCHAR,
-    "P_TABLE_NAME" VARCHAR,
-    "P_RUN_ID"     VARCHAR DEFAULT 'N/A'
+    "P_TABLE_NAME" VARCHAR
 )
 RETURNS VARIANT
 LANGUAGE SQL
@@ -28,7 +28,6 @@ DECLARE
     v_ppn_id      NUMBER  DEFAULT P_PPN_ID;
     v_source_id   STRING  DEFAULT NULLIF(TRIM(P_SOURCE_ID), '');
     v_table       STRING  DEFAULT UPPER(NULLIF(TRIM(P_TABLE_NAME), ''));
-    v_run_id      STRING  DEFAULT COALESCE(NULLIF(TRIM(P_RUN_ID), ''), 'N/A');
 
     v_source_type STRING;
     v_stage       STRING;
@@ -183,10 +182,9 @@ BEGIN
         P_ROW_COUNT   => :v_row_count,
         P_MESSAGE     => 'SUCCESS: loaded ' || v_row_count || ' row(s) into ' || v_target_sch || '.' || v_table || '.',
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
-            'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_FILE_TO_BRONZE','ppn_id',:v_ppn_id,'run_id',:v_run_id),
+            'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_FILE_TO_BRONZE','ppn_id',:v_ppn_id),
             'results', OBJECT_CONSTRUCT('files', :v_file_list, 'rows_loaded', :v_row_count)
-        )::STRING,
-        P_RUN_ID      => :v_run_id
+        )::STRING
     ) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
@@ -223,9 +221,8 @@ EXCEPTION
                         'sqlcode',          IFF(:v_error_msg IS NULL, :SQLCODE, NULL),
                         'sqlstate',         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)
                     ),
-                    'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_FILE_TO_BRONZE','ppn_id',:v_ppn_id,'run_id',:v_run_id)
-                )::STRING,
-                P_RUN_ID      => :v_run_id
+                    'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_FILE_TO_BRONZE','ppn_id',:v_ppn_id)
+                )::STRING
             ) INTO :v_log_rows;
         EXCEPTION
             WHEN OTHER THEN NULL;

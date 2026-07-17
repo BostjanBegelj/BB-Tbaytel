@@ -1,5 +1,6 @@
 -- ADM.SP_CLOSE_PPN - finalise a run: set ADM.PPN.STATUS + END_TS and write the
 -- run-level END (or ERROR) log row. Last step of every run.
+-- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 -- ERROR-first logging envelope; re-raises so the ADF activity also fails.
 
 use role dev_sysadmin;
@@ -9,7 +10,6 @@ use schema adm;
 CREATE OR REPLACE PROCEDURE ADM.SP_CLOSE_PPN(
     "P_PPN_ID"  NUMBER(38,0),
     "P_STATUS"  VARCHAR DEFAULT 'SUCCESS',           -- SUCCESS | ERROR
-    "P_RUN_ID"  VARCHAR DEFAULT 'N/A',
     "P_MESSAGE" VARCHAR DEFAULT NULL
 )
 RETURNS VARIANT
@@ -22,7 +22,6 @@ DECLARE
 
     v_ppn_id     NUMBER DEFAULT P_PPN_ID;
     v_status     STRING DEFAULT UPPER(COALESCE(NULLIF(TRIM(P_STATUS), ''), 'SUCCESS'));
-    v_run_id     STRING DEFAULT COALESCE(NULLIF(TRIM(P_RUN_ID), ''), 'N/A');
 
     v_phase      STRING DEFAULT 'INIT';
     v_started_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
@@ -73,9 +72,8 @@ BEGIN
                                 'ERROR: run closed with errors.',
                                 'END: run completed successfully.')),
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
-            'context', OBJECT_CONSTRUCT('procedure','SP_CLOSE_PPN','ppn_id',:v_ppn_id,'run_status',:v_status,'run_id',:v_run_id)
-        )::STRING,
-        P_RUN_ID      => :v_run_id
+            'context', OBJECT_CONSTRUCT('procedure','SP_CLOSE_PPN','ppn_id',:v_ppn_id,'run_status',:v_status)
+        )::STRING
     ) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
@@ -105,9 +103,8 @@ EXCEPTION
                             'sqlcode',          IFF(:v_error_msg IS NULL, :SQLCODE, NULL),
                             'sqlstate',         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)
                         ),
-                        'context', OBJECT_CONSTRUCT('procedure','SP_CLOSE_PPN','ppn_id',:v_ppn_id,'run_id',:v_run_id)
-                    )::STRING,
-                    P_RUN_ID      => :v_run_id
+                        'context', OBJECT_CONSTRUCT('procedure','SP_CLOSE_PPN','ppn_id',:v_ppn_id)
+                    )::STRING
                 ) INTO :v_log_rows;
             END IF;
         EXCEPTION

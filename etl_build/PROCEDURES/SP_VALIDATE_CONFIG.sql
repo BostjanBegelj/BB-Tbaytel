@@ -4,6 +4,7 @@
 --   * ETL_TABLES : LOAD_TYPE valid; INCR has PK_COLUMNS; PARTITION has PARTITION_COLUMN;
 --                  SOURCE_ID resolves to an active source; PARQUET has FILE_PATTERN; DATASHARE has SOURCE_OBJECT.
 -- Physical file/stage presence is checked at load time by the load procedure (it LISTs the stage).
+-- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 -- All violations are collected, logged once in the ERROR-first envelope, then raised.
 
 use role dev_sysadmin;
@@ -11,8 +12,7 @@ use database dev_db;
 use schema adm;
 
 CREATE OR REPLACE PROCEDURE ADM.SP_VALIDATE_CONFIG(
-    "P_PPN_ID" NUMBER(38,0),
-    "P_RUN_ID" VARCHAR DEFAULT 'N/A'
+    "P_PPN_ID" NUMBER(38,0)
 )
 RETURNS VARIANT
 LANGUAGE SQL
@@ -23,7 +23,6 @@ DECLARE
     e_failed EXCEPTION (-20600, 'SP_VALIDATE_CONFIG failed: configuration invalid.');
 
     v_ppn_id     NUMBER DEFAULT P_PPN_ID;
-    v_run_id     STRING DEFAULT COALESCE(NULLIF(TRIM(P_RUN_ID), ''), 'N/A');
     v_phase      STRING DEFAULT 'INIT';
     v_started_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
     v_violations ARRAY;
@@ -99,9 +98,8 @@ BEGIN
         P_ROW_COUNT   => 0,
         P_MESSAGE     => 'SUCCESS: configuration valid.',
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
-            'context', OBJECT_CONSTRUCT('procedure','SP_VALIDATE_CONFIG','ppn_id',:v_ppn_id,'run_id',:v_run_id)
-        )::STRING,
-        P_RUN_ID      => :v_run_id
+            'context', OBJECT_CONSTRUCT('procedure','SP_VALIDATE_CONFIG','ppn_id',:v_ppn_id)
+        )::STRING
     ) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
@@ -132,9 +130,8 @@ EXCEPTION
                             'sqlcode',          IFF(:v_error_msg IS NULL, :SQLCODE, NULL),
                             'sqlstate',         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)
                         ),
-                        'context', OBJECT_CONSTRUCT('procedure','SP_VALIDATE_CONFIG','ppn_id',:v_ppn_id,'run_id',:v_run_id)
-                    )::STRING,
-                    P_RUN_ID      => :v_run_id
+                        'context', OBJECT_CONSTRUCT('procedure','SP_VALIDATE_CONFIG','ppn_id',:v_ppn_id)
+                    )::STRING
                 ) INTO :v_log_rows;
             END IF;
         EXCEPTION
