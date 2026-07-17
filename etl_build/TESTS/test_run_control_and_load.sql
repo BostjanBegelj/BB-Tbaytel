@@ -10,7 +10,7 @@
 -- Note: RUN_ID is set once by SP_CREATE_PPN into ADM.PPN; all other procs take PPN_ID only.
 -- =============================================================================
 use role dev_sysadmin;
--- use warehouse <your_wh>;          -- set your dev warehouse
+use warehouse compute_wh;
 use database dev_db;
 use schema adm;
 
