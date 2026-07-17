@@ -37,6 +37,7 @@ DECLARE
     v_pk_columns    STRING;
     v_partition_col STRING;
     v_scope         STRING  DEFAULT '';
+    v_sync          VARIANT;
     v_db            STRING  DEFAULT UPPER(CURRENT_DATABASE());
     v_bronze_fq   STRING;
     v_silver_fq   STRING;
@@ -144,6 +145,14 @@ BEGIN
              'CURRENT_TIMESTAMP()::TIMESTAMP_NTZ(9) AS DW_UPDATED_AT FROM ' || v_bronze_fq || ' WHERE 1=0';
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
+
+    /* 4b. RECONCILE SILVER STRUCTURE TO BRONZE business cols ------------ */
+    v_phase := 'SYNC_SILVER';
+    CALL ADM.SP_SYNC_TABLE_STRUCTURE(:v_src_sch, 'SILVER', :v_table, 'METADATA$FILENAME') INTO :v_sync;
+    IF (GET(:v_sync, 'status')::STRING <> 'SUCCESS') THEN
+        v_error_msg := 'Structure sync failed: ' || COALESCE(GET(:v_sync, 'message')::STRING, '(no message)');
+        RAISE e_failed;
+    END IF;
 
     /* 5. MERGE (insert / update-on-change / un-delete) ------------------ */
     v_phase := 'MERGE';

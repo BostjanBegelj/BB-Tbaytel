@@ -95,6 +95,17 @@ SELECT PK_HK, ROW_HK, IS_DELETED, CUSTOMER_ID, CITY, DW_INSERTED_AT, DW_UPDATED_
 --   * date-03: customer 1002 is absent            -> SILVER row 1002 gets IS_DELETED = TRUE (others stay FALSE).
 
 -- =============================================================================
+-- TEST 3e — SP_SYNC_TABLE_STRUCTURE (drift safety net; also called inside HIST/SILVER)
+--   Simulate a new source column in BRONZE, then re-run HIST + SILVER: sync adds it,
+--   the loads succeed (instead of failing on column mismatch).
+-- =============================================================================
+-- ALTER TABLE DEV_DB.BRONZE.CUSTOMER ADD COLUMN LOYALTY_TIER VARCHAR;
+-- UPDATE DEV_DB.BRONZE.CUSTOMER SET LOYALTY_TIER = 'GOLD' WHERE CUSTOMER_ID = 1001;
+-- CALL ADM.SP_LOAD_BRONZE_TO_HIST(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'CUSTOMER');   -- BRONZE_HIST gains LOYALTY_TIER
+-- CALL ADM.SP_LOAD_BRONZE_TO_SILVER(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'CUSTOMER'); -- SILVER gains LOYALTY_TIER
+-- SELECT * FROM DEV_DB.SILVER.CUSTOMER;   -- new column present; METADATA$FILENAME NOT added to SILVER
+
+-- =============================================================================
 -- TEST 4 — negative: PARQUET loader against a DATASHARE source (expect ERROR obj)
 --   Returns status=ERROR with a clear message; no SP_LOAD_SHARE_TO_BRONZE yet.
 -- =============================================================================

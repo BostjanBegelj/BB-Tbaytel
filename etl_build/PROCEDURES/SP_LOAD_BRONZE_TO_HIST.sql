@@ -31,6 +31,8 @@ DECLARE
     v_db          STRING  DEFAULT UPPER(CURRENT_DATABASE());
     v_src_fq      STRING;
     v_hist_fq     STRING;
+    v_cols_all    STRING;
+    v_sync        VARIANT;
 
     v_cfg_count   NUMBER  DEFAULT 0;
     v_row_count   NUMBER  DEFAULT 0;
@@ -77,11 +79,19 @@ BEGIN
     /* mark state RUNNING */
     CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'RUNNING', 'LOAD_BRONZE_TO_HIST');
 
-    /* 3. ENSURE HISTORY TABLE EXISTS (structure mirrors BRONZE) --------- */
-    v_phase := 'CREATE_HIST';
-    v_sql := 'CREATE TABLE IF NOT EXISTS ' || v_hist_fq || ' LIKE ' || v_src_fq;
-    v_last_sql := v_sql;
-    EXECUTE IMMEDIATE v_sql;
+    /* 3. RECONCILE HISTORY STRUCTURE TO BRONZE (create / add columns) --- */
+    v_phase := 'SYNC_HIST';
+    CALL ADM.SP_SYNC_TABLE_STRUCTURE(:v_src_sch, :v_hist_sch, :v_table) INTO :v_sync;
+    IF (GET(:v_sync, 'status')::STRING <> 'SUCCESS') THEN
+        v_error_msg := 'Structure sync failed: ' || COALESCE(GET(:v_sync, 'message')::STRING, '(no message)');
+        RAISE e_failed;
+    END IF;
+
+    -- all BRONZE columns (explicit list so extra history columns don't misalign)
+    SELECT LISTAGG('"' || COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY ORDINAL_POSITION)
+      INTO :v_cols_all
+      FROM DEV_DB.INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = :v_src_sch AND TABLE_NAME = :v_table;
 
     /* 4. IDEMPOTENT APPEND: delete this PPN, then insert --------------- */
     v_phase := 'DELETE_PPN';
@@ -90,7 +100,8 @@ BEGIN
     EXECUTE IMMEDIATE v_sql;
 
     v_phase := 'INSERT_HIST';
-    v_sql := 'INSERT INTO ' || v_hist_fq || ' SELECT * FROM ' || v_src_fq || ' WHERE PPN_ID = ' || v_ppn_id;
+    v_sql := 'INSERT INTO ' || v_hist_fq || ' (' || v_cols_all || ') SELECT ' || v_cols_all ||
+             ' FROM ' || v_src_fq || ' WHERE PPN_ID = ' || v_ppn_id;
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
