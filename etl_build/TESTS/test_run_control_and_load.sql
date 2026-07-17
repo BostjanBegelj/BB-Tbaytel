@@ -78,6 +78,23 @@ CALL ADM.SP_LOAD_BRONZE_TO_HIST(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P
 SELECT COUNT(*) AS hist_rows_this_ppn FROM DEV_DB.BRONZE_HIST.CUSTOMER WHERE PPN_ID = $PPN_ID;  -- still 5
 
 -- =============================================================================
+-- TEST 3d — SP_LOAD_BRONZE_TO_SILVER  (PK_HK/ROW_HK, MERGE, IS_DELETED)
+-- =============================================================================
+CALL ADM.SP_LOAD_BRONZE_TO_SILVER(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA',   P_TABLE_NAME => 'CUSTOMER');
+CALL ADM.SP_LOAD_BRONZE_TO_SILVER(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA',   P_TABLE_NAME => 'SERVICE_PLAN');
+CALL ADM.SP_LOAD_BRONZE_TO_SILVER(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA',   P_TABLE_NAME => 'USAGE_DAILY');
+CALL ADM.SP_LOAD_BRONZE_TO_SILVER(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
+CALL ADM.SP_LOAD_BRONZE_TO_SILVER(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'WHOLESALE_USAGE');
+
+SELECT PK_HK, ROW_HK, IS_DELETED, CUSTOMER_ID, CITY, DW_INSERTED_AT, DW_UPDATED_AT
+  FROM DEV_DB.SILVER.CUSTOMER ORDER BY CUSTOMER_ID;
+
+-- To see change-capture + soft-delete end to end, run the whole flow again with the
+-- date-02 file, then the date-03 file (each needs a NEW PPN + re-uploaded file):
+--   * date-02: customer 1002 changes city/email  -> that row's ROW_HK changes, DW_UPDATED_AT bumps; 1006 inserted.
+--   * date-03: customer 1002 is absent            -> SILVER row 1002 gets IS_DELETED = TRUE (others stay FALSE).
+
+-- =============================================================================
 -- TEST 4 — negative: PARQUET loader against a DATASHARE source (expect ERROR obj)
 --   Returns status=ERROR with a clear message; no SP_LOAD_SHARE_TO_BRONZE yet.
 -- =============================================================================
