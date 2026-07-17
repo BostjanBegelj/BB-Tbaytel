@@ -153,6 +153,22 @@ BEGIN
         v_error_msg := 'Structure sync failed: ' || COALESCE(GET(:v_sync, 'message')::STRING, '(no message)');
         RAISE e_failed;
     END IF;
+    -- audit structural changes only (CREATED / ALTERED); NOCHANGE stays quiet
+    IF (GET(:v_sync, 'action')::STRING IN ('CREATED', 'ALTERED')) THEN
+        CALL ADM.SP_LOG_STEP(
+            P_PPN_ID        => :v_ppn_id,
+            P_PHASE         => 'SYNC_SILVER',
+            P_STATUS        => 'SUCCESS',
+            P_SOURCE_ID     => :v_source_id,
+            P_TABLE_NAME    => :v_table,
+            P_TARGET_OBJECT => :v_silver_fq,
+            P_MESSAGE       => 'STRUCTURE ' || GET(:v_sync, 'action')::STRING || ' on SILVER.' || :v_table || '.',
+            P_DETAIL_JSON   => OBJECT_CONSTRUCT(
+                'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_BRONZE_TO_SILVER','ppn_id',:v_ppn_id),
+                'sync', :v_sync
+            )::STRING
+        ) INTO :v_log_rows;
+    END IF;
 
     /* 5. MERGE (insert / update-on-change / un-delete) ------------------ */
     v_phase := 'MERGE';
