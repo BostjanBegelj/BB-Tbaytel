@@ -1,7 +1,6 @@
 -- ADM.SP_VALIDATE_CONFIG - pre-flight validation of the ACTIVE config rows before a run.
 -- Checks (set-based, all active rows at once):
---   * ETL_SOURCES: SOURCE_TYPE valid; PARQUET has STAGE_NAME + FILE_FORMAT; DATASHARE has SHARE_DB;
---                  DATASHARE SHARE_DB exists / is visible.
+--   * ETL_SOURCES: SOURCE_TYPE valid; PARQUET has STAGE_NAME + FILE_FORMAT; DATASHARE has SHARE_DB.
 --   * ETL_TABLES : LOAD_TYPE valid; INCR has PK_COLUMNS; PARTITION has PARTITION_COLUMN;
 --                  SOURCE_ID resolves to an active source; PARQUET has FILE_PATTERN; DATASHARE has SOURCE_OBJECT.
 -- Physical file/stage presence is checked at load time by the load procedure (it LISTs the stage).
@@ -53,11 +52,6 @@ BEGIN
         SELECT 'ETL_SOURCES [' || source_id || '] DATASHARE requires SHARE_DB'
           FROM ADM.ETL_SOURCES
          WHERE active_flag AND UPPER(source_type) = 'DATASHARE' AND share_db IS NULL
-        UNION ALL
-        SELECT 'ETL_SOURCES [' || source_id || '] SHARE_DB [' || share_db || '] does not exist / not visible'
-          FROM ADM.ETL_SOURCES s
-         WHERE s.active_flag AND UPPER(source_type) = 'DATASHARE' AND share_db IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.DATABASES d WHERE d.database_name = s.share_db)
         UNION ALL
         -- ETL_TABLES -------------------------------------------------------
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] invalid LOAD_TYPE [' || COALESCE(load_type, '<null>') || ']'

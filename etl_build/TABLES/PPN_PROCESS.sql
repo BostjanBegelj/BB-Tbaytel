@@ -17,7 +17,6 @@ create or replace table adm.ppn_process (
     rows_updated    number(38,0)     comment 'Rows updated downstream.',
     rows_deleted    number(38,0)     comment 'Rows soft/hard deleted downstream.',
     watermark_value varchar          comment 'Last incremental high-water mark (stored as text).',
-    retry_count     number(38,0)     not null default 0 comment 'Retry attempts for this run x table.',
     error_msg       varchar          comment 'Root-cause error message on failure.',
     start_ts        timestamp_ntz(9) comment 'Processing start timestamp.',
     end_ts          timestamp_ntz(9) comment 'Processing end timestamp.',

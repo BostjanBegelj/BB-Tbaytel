@@ -1,8 +1,8 @@
 -- ADM.SP_SET_PROCESS_STATE - helper: upsert the ADM.PPN_PROCESS state row
 -- (one per PPN_ID x SOURCE_ID x TABLE_NAME). PPN_PROCESS is authoritative for
--- run-time state and drives reruns + the GOLD gate.
+-- run-time state and drives the GOLD gate.
 -- Semantics: non-null args OVERWRITE; null args PRESERVE the existing value.
--- RETRY_COUNT increments only when P_INCREMENT_RETRY; START/END_TS set on flags.
+-- START_TS is stamped automatically on first insert; P_SET_END stamps END_TS.
 
 use role dev_sysadmin;
 use database dev_db;
@@ -20,8 +20,6 @@ CREATE OR REPLACE PROCEDURE ADM.SP_SET_PROCESS_STATE(
     "P_ROWS_DELETED"    NUMBER(38,0) DEFAULT NULL,
     "P_WATERMARK_VALUE" VARCHAR DEFAULT NULL,
     "P_ERROR_MSG"       VARCHAR DEFAULT NULL,
-    "P_INCREMENT_RETRY" BOOLEAN DEFAULT FALSE,
-    "P_SET_START"       BOOLEAN DEFAULT FALSE,
     "P_SET_END"         BOOLEAN DEFAULT FALSE
 )
 RETURNS NUMBER(38,0)
@@ -44,17 +42,14 @@ BEGIN
         ROWS_DELETED    = COALESCE(:P_ROWS_DELETED,    t.ROWS_DELETED),
         WATERMARK_VALUE = COALESCE(:P_WATERMARK_VALUE, t.WATERMARK_VALUE),
         ERROR_MSG       = COALESCE(:P_ERROR_MSG,       t.ERROR_MSG),
-        RETRY_COUNT     = t.RETRY_COUNT + IFF(:P_INCREMENT_RETRY, 1, 0),
-        START_TS        = IFF(:P_SET_START, :v_now, t.START_TS),
-        END_TS          = IFF(:P_SET_END,   :v_now, t.END_TS)
+        END_TS          = IFF(:P_SET_END, :v_now, t.END_TS)
     WHEN NOT MATCHED THEN INSERT
         (PPN_ID, SOURCE_ID, TABLE_NAME, STATUS, PHASE,
          ROWS_EXTRACTED, ROWS_INSERTED, ROWS_UPDATED, ROWS_DELETED,
-         WATERMARK_VALUE, RETRY_COUNT, ERROR_MSG, START_TS, END_TS)
+         WATERMARK_VALUE, ERROR_MSG, START_TS, END_TS)
         VALUES
         (:P_PPN_ID, :P_SOURCE_ID, :P_TABLE_NAME, :P_STATUS, :P_PHASE,
          :P_ROWS_EXTRACTED, :P_ROWS_INSERTED, :P_ROWS_UPDATED, :P_ROWS_DELETED,
-         :P_WATERMARK_VALUE, IFF(:P_INCREMENT_RETRY, 1, 0), :P_ERROR_MSG,
-         IFF(:P_SET_START, :v_now, NULL), IFF(:P_SET_END, :v_now, NULL));
+         :P_WATERMARK_VALUE, :P_ERROR_MSG, :v_now, IFF(:P_SET_END, :v_now, NULL));
     RETURN SQLROWCOUNT;
 END;
