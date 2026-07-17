@@ -67,6 +67,17 @@ SELECT SOURCE_ID, TABLE_NAME, STATUS, ROWS_EXTRACTED
   FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN_ID AND SOURCE_ID = 'WHOLESALE';
 
 -- =============================================================================
+-- TEST 3c — SP_LOAD_BRONZE_TO_HIST  (append BRONZE -> BRONZE_HIST, idempotent per PPN)
+-- =============================================================================
+CALL ADM.SP_LOAD_BRONZE_TO_HIST(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA',   P_TABLE_NAME => 'CUSTOMER');
+CALL ADM.SP_LOAD_BRONZE_TO_HIST(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
+SELECT * FROM DEV_DB.BRONZE_HIST.CUSTOMER WHERE PPN_ID = $PPN_ID;
+
+-- Idempotency: run the same table again -> row count for this PPN must NOT change.
+CALL ADM.SP_LOAD_BRONZE_TO_HIST(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'CUSTOMER');
+SELECT COUNT(*) AS hist_rows_this_ppn FROM DEV_DB.BRONZE_HIST.CUSTOMER WHERE PPN_ID = $PPN_ID;  -- still 5
+
+-- =============================================================================
 -- TEST 4 — negative: PARQUET loader against a DATASHARE source (expect ERROR obj)
 --   Returns status=ERROR with a clear message; no SP_LOAD_SHARE_TO_BRONZE yet.
 -- =============================================================================
