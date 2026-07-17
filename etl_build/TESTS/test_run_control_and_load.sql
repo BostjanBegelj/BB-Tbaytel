@@ -106,6 +106,18 @@ SELECT PK_HK, ROW_HK, IS_DELETED, CUSTOMER_ID, CITY, DW_INSERTED_AT, DW_UPDATED_
 -- SELECT * FROM DEV_DB.SILVER.CUSTOMER;   -- new column present; METADATA$FILENAME NOT added to SILVER
 
 -- =============================================================================
+-- TEST 3f — SP_CHECK_DATA_CHANGE (skip-if-identical). Needs a prior BRONZE_HIST snapshot.
+--   In the flow it runs AFTER BRONZE load, BEFORE HIST/SILVER; if is_identical=TRUE the
+--   orchestrator skips HIST+SILVER. Demo (2 runs):
+--     Run 1 (this PPN): load CUSTOMER to BRONZE + HIST (done above in 3/3c).
+--     Run 2: SP_CREATE_PPN -> new $PPN_ID2 -> reload the SAME CUSTOMER file to BRONZE:
+--        CALL ADM.SP_LOAD_FILE_TO_BRONZE($PPN_ID2, 'BSS_ORA', 'CUSTOMER');
+--        CALL ADM.SP_CHECK_DATA_CHANGE($PPN_ID2, 'BSS_ORA', 'CUSTOMER');  -- is_identical = TRUE, action IDENTICAL
+--     Then reload a DIFFERENT date's file and re-check -> is_identical = FALSE.
+-- Quick single-run call (will report NO_PREVIOUS if CUSTOMER has only this PPN in HIST):
+CALL ADM.SP_CHECK_DATA_CHANGE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'CUSTOMER');
+
+-- =============================================================================
 -- TEST 4 — negative: PARQUET loader against a DATASHARE source (expect ERROR obj)
 --   Returns status=ERROR with a clear message; no SP_LOAD_SHARE_TO_BRONZE yet.
 -- =============================================================================
