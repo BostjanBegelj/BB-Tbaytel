@@ -51,6 +51,22 @@ SELECT PHASE, STATUS, TABLE_NAME, ROW_COUNT, DURATION_MSEC, MESSAGE
   FROM ADM.PPN_LOG WHERE PPN_ID = $PPN_ID ORDER BY LOG_ID;
 
 -- =============================================================================
+-- TEST 3b — SP_LOAD_SHARE_TO_BRONZE  (WHOLESALE data-share tables)
+--   Caller needs SELECT on SHARE_SIM_DB.WHOLESALE. The SHARE_SIM_DB script grants
+--   it to DEV_TRANSFORMER; if testing as DEV_SYSADMIN, grant it once:
+--     use role sysadmin;
+--     grant usage  on database share_sim_db                       to role dev_sysadmin;
+--     grant usage  on schema   share_sim_db.wholesale             to role dev_sysadmin;
+--     grant select on all tables in schema share_sim_db.wholesale to role dev_sysadmin;
+--     use role dev_sysadmin;
+-- =============================================================================
+CALL ADM.SP_LOAD_SHARE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
+CALL ADM.SP_LOAD_SHARE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'WHOLESALE_USAGE');
+SELECT * FROM DEV_DB.BRONZE.PARTNER_ACCOUNT;
+SELECT SOURCE_ID, TABLE_NAME, STATUS, ROWS_EXTRACTED
+  FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN_ID AND SOURCE_ID = 'WHOLESALE';
+
+-- =============================================================================
 -- TEST 4 — negative: PARQUET loader against a DATASHARE source (expect ERROR obj)
 --   Returns status=ERROR with a clear message; no SP_LOAD_SHARE_TO_BRONZE yet.
 -- =============================================================================
