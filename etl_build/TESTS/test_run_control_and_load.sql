@@ -118,6 +118,19 @@ SELECT PK_HK, ROW_HK, IS_DELETED, CUSTOMER_ID, CITY, DW_INSERTED_AT, DW_UPDATED_
 CALL ADM.SP_CHECK_DATA_CHANGE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'CUSTOMER');
 
 -- =============================================================================
+-- TEST 3g — SP_RUN_TABLE_LOAD (wrapped): one call per table = landing -> check -> HIST -> SILVER.
+--   This is the production path (ADF calls this per table). Tip: use a FRESH PPN so the change
+--   check has a prior snapshot to compare against:
+--     CALL ADM.SP_CREATE_PPN('test-run-002');
+--     SET PPN2 = (SELECT "PPN_ID" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
+--     -- (re-run SP_LOAD_FILE_TO_BRONZE for a new file/date first if you want a real BRONZE for PPN2)
+-- =============================================================================
+CALL ADM.SP_RUN_TABLE_LOAD(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA',   P_TABLE_NAME => 'CUSTOMER');
+CALL ADM.SP_RUN_TABLE_LOAD(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
+SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, ROWS_INSERTED, ROWS_DELETED
+  FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN_ID ORDER BY SOURCE_ID, TABLE_NAME;
+
+-- =============================================================================
 -- TEST 4 — negative: PARQUET loader against a DATASHARE source (expect ERROR obj)
 --   Returns status=ERROR with a clear message; no SP_LOAD_SHARE_TO_BRONZE yet.
 -- =============================================================================
