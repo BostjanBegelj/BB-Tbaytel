@@ -108,7 +108,10 @@ BEGIN
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
-    SELECT LISTAGG('''' || "name" || '''', ',')
+    -- LIST returns "name" WITH the stage name as its first segment
+    -- (e.g. ext_stage_azure/BSS_ORA/.../file). INFER_SCHEMA FILES are relative to
+    -- LOCATION (the stage root), so strip that first segment.
+    SELECT LISTAGG('''' || REGEXP_REPLACE("name", '^[^/]+/', '') || '''', ',')
       INTO :v_file_list
       FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
 
