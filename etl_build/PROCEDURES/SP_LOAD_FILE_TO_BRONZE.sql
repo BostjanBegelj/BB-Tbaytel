@@ -183,7 +183,7 @@ BEGIN
         P_SOURCE_OBJECT => :v_stage,
         P_TARGET_OBJECT => :v_target_fq,
         P_ROW_COUNT   => :v_row_count,
-        P_MESSAGE     => 'SUCCESS: loaded ' || v_row_count || ' row(s) into ' || v_target_sch || '.' || v_table || '.',
+        P_MESSAGE     => 'SUCCESS: loaded ' || :v_row_count || ' row(s) into ' || :v_target_sch || '.' || :v_table || '.',
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_FILE_TO_BRONZE','ppn_id',:v_ppn_id),
             'results', OBJECT_CONSTRUCT('files', :v_file_list, 'rows_loaded', :v_row_count)
