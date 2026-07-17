@@ -26,7 +26,7 @@ COMMENT = 'Load BRONZE -> SILVER for one table: PK_HK/ROW_HK, MERGE upsert, IS_D
 EXECUTE AS CALLER
 AS
 DECLARE
-    e_failed EXCEPTION (-21000, 'SP_LOAD_BRONZE_TO_SILVER failed.');
+    e_failed EXCEPTION (-20990, 'SP_LOAD_BRONZE_TO_SILVER failed.');
 
     v_ppn_id      NUMBER  DEFAULT P_PPN_ID;
     v_source_id   STRING  DEFAULT NULLIF(TRIM(P_SOURCE_ID), '');
