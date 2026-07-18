@@ -135,7 +135,7 @@ EXCEPTION
             CALL ADM.SP_LOG_STEP(
                 P_PPN_ID => :v_ppn_id, P_PHASE => 'RUN_TABLE_LOAD', P_STATUS => 'ERROR',
                 P_SOURCE_ID => :v_source_id, P_TABLE_NAME => :v_table,
-                P_MESSAGE => 'ERROR [SP_RUN_TABLE_LOAD/' || :v_phase || ']: ' || :v_final,
+                P_MESSAGE => 'ERROR [SP_RUN_TABLE_LOAD/' || :v_phase || ']: ' || :v_final_msg,
                 P_DETAIL_JSON => OBJECT_CONSTRUCT(
                     'ERROR', OBJECT_CONSTRUCT('source_procedure','SP_RUN_TABLE_LOAD','source_phase',:v_phase,
                         'message',:v_final_msg,'sqlcode',IFF(:v_error_msg IS NULL,:SQLCODE,NULL),
