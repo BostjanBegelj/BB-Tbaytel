@@ -49,10 +49,14 @@ sequenceDiagram
     Note over ADF,SF: RUN LEVEL (after all tables)
     ADF->>SF: CALL SP_RUN_DQ_CHECKS(PPN_ID)   %% AntFarm — pending
     SF-->>ADF: max severity + blocking flag
-    ADF->>SF: finalize = SP_GATE_CHECK + SP_REFRESH_GOLD   %% one step — pending
-    Note over SF: gate PASS → refresh GOLD;  gate FAIL → skip GOLD + one alert
-    ADF->>SF: CALL SP_CLOSE_PPN(PPN_ID, SUCCESS|ERROR)
-    SF-->>ADF: ADM.PPN = final status + END_TS
+    ADF->>SF: CALL SP_FINALIZE_RUN(PPN_ID)
+    Note over SF: gate → PASS: refresh GOLD → close SUCCESS;<br/>FAIL: skip GOLD → close ERROR + re-raise
+    alt run OK
+        SF-->>ADF: SUCCESS  (ADM.PPN = SUCCESS)
+    else run failed
+        SF-->>ADF: raises → ADF activity fails + alert  (ADM.PPN = ERROR)
+    end
+    Note over ADF,SF: early abort (validate/loop error) → ADF calls SP_CLOSE_PPN(ERROR) directly
 ```
 
 ---
@@ -70,8 +74,8 @@ sequenceDiagram
 | 6 | ADF → SF | `SP_RUN_TABLE_LOAD(PPN_ID, SOURCE_ID, TABLE)` — wraps landing (file/share) → check-change → HIST → SILVER; SKIP if identical | config, `BRONZE`, `BRONZE_HIST` | `BRONZE`/`BRONZE_HIST`/`SILVER`, `PPN_PROCESS`, `PPN_LOG` |
 | — | | **Run level (after all tables):** | | |
 | 7 | ADF → SF | `SP_RUN_DQ_CHECKS(PPN_ID)` — *AntFarm, pending* | `SILVER` | DQ verdict → `PPN_PROCESS`/`PPN_LOG` |
-| 8 | ADF → SF | Finalize (one step) = `SP_GATE_CHECK` + `SP_REFRESH_GOLD` — *pending*; gate PASS → refresh GOLD, FAIL → skip + alert | `PPN_PROCESS`,`SILVER` | `GOLD` / `GOLD_{domain}` |
-| 9 | ADF → SF | `SP_CLOSE_PPN(PPN_ID, SUCCESS\|ERROR)` | `ADM.PPN` | `ADM.PPN` final, `PPN_LOG` END/ERROR |
+| 8 | ADF → SF | `SP_FINALIZE_RUN(PPN_ID)` — gate → GOLD (if pass) → close; returns SUCCESS or re-raises. `SP_REFRESH_GOLD` currently a **stub** | `PPN_PROCESS`,`SILVER` | `ADM.PPN` final, `GOLD`/`GOLD_{domain}`, `PPN_LOG` |
+| 9 | ADF → SF | `SP_CLOSE_PPN(PPN_ID, ERROR)` — **only for early aborts** (validate/loop failures before finalize) | `ADM.PPN` | `ADM.PPN` final, `PPN_LOG` |
 | 10 | ADF | On any failure: one alert; failed activity surfaces in monitoring | — | — |
 
 ---
@@ -112,9 +116,9 @@ status per table for its own alerting.)
 
 **Built:** `SP_CREATE_PPN`, `SP_VALIDATE_CONFIG`, `SP_RUN_TABLE_LOAD` (wrapper),
 `SP_LOAD_FILE_TO_BRONZE`, `SP_LOAD_SHARE_TO_BRONZE`, `SP_CHECK_DATA_CHANGE`,
-`SP_LOAD_BRONZE_TO_HIST`, `SP_LOAD_BRONZE_TO_SILVER`, `SP_SYNC_TABLE_STRUCTURE`, helpers
-`SP_LOG_STEP` / `SP_SET_PROCESS_STATE`, `SP_CLOSE_PPN`. (Loaders + run-control tested on DEV;
-`SP_RUN_TABLE_LOAD` newly built.)
+`SP_LOAD_BRONZE_TO_HIST`, `SP_LOAD_BRONZE_TO_SILVER`, `SP_SYNC_TABLE_STRUCTURE`,
+`SP_GATE_CHECK`, `SP_FINALIZE_RUN`, `SP_REFRESH_GOLD` (**stub**), helpers `SP_LOG_STEP` /
+`SP_SET_PROCESS_STATE`, `SP_CLOSE_PPN`. (Loaders + run-control tested on DEV; gate/finalize newly built.)
 
-**Pending:** `SP_RUN_DQ_CHECKS` (waits on the AntFarm DQ tool), `SP_GATE_CHECK`,
-`SP_REFRESH_GOLD` (gate+GOLD to be one finalize step), `SP_REPLAY_FROM_HIST` (recovery).
+**Pending:** `SP_RUN_DQ_CHECKS` (waits on the AntFarm DQ tool), real `SP_REFRESH_GOLD`
+implementation (Dynamic Tables / dbt), `SP_REPLAY_FROM_HIST` (recovery).

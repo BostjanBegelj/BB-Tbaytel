@@ -168,3 +168,26 @@ SELECT PHASE, STATUS, MESSAGE FROM ADM.PPN_LOG WHERE PPN_ID = $PPN_ID AND PHASE 
 -- CALL ADM.SP_VALIDATE_CONFIG(P_PPN_ID => $PPN_ID);   -- expect an error is raised
 -- SELECT DETAIL_JSON FROM ADM.PPN_LOG WHERE PPN_ID = $PPN_ID AND PHASE='VALIDATE_CONFIG' ORDER BY LOG_ID DESC LIMIT 1;
 -- UPDATE ADM.ETL_TABLES SET pk_columns = 'USAGE_ID' WHERE source_id='BSS_ORA' AND table_name='USAGE_DAILY';  -- restore
+
+-- =============================================================================
+-- TEST 8 — SP_GATE_CHECK + SP_FINALIZE_RUN (run finalize; the production run-end)
+--   In production ADF calls SP_FINALIZE_RUN once (after DQ). It reads PPN_PROCESS, and:
+--     PASS  -> SP_REFRESH_GOLD (stub) -> SP_CLOSE_PPN(SUCCESS) -> returns SUCCESS.
+--     FAIL  -> skip GOLD -> SP_CLOSE_PPN(ERROR) -> RE-RAISES (ADF activity fails).
+--   NOTE: earlier negative steps (TEST 4 set PARTNER_ACCOUNT=ERROR on this PPN) will make the
+--   gate FAIL here — that is correct fail-closed behavior. For a clean PASS, run a fresh PPN
+--   through only SP_RUN_TABLE_LOAD (Test 3g) then finalize.
+-- =============================================================================
+CALL ADM.SP_GATE_CHECK(P_PPN_ID => $PPN_ID);    -- inspect verdict + reason (no side effects)
+CALL ADM.SP_FINALIZE_RUN(P_PPN_ID => $PPN_ID);  -- gate -> GOLD(stub) -> close; raises if the run failed
+SELECT PPN_ID, STATUS, START_TS, END_TS FROM ADM.PPN WHERE PPN_ID = $PPN_ID;
+SELECT PHASE, STATUS, MESSAGE FROM ADM.PPN_LOG
+ WHERE PPN_ID = $PPN_ID AND PHASE IN ('GATE_CHECK','REFRESH_GOLD','CLOSE_PPN') ORDER BY LOG_ID;
+
+-- Clean end-to-end PASS demo (fresh PPN, wrapped loads only):
+--   CALL ADM.SP_CREATE_PPN('test-run-003');
+--   SET PPN3 = (SELECT "PPN_ID" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
+--   CALL ADM.SP_RUN_TABLE_LOAD($PPN3, 'BSS_ORA', 'CUSTOMER');
+--   CALL ADM.SP_RUN_TABLE_LOAD($PPN3, 'BSS_ORA', 'SERVICE_PLAN');
+--   CALL ADM.SP_FINALIZE_RUN($PPN3);   -- gate PASS -> GOLD stub -> close SUCCESS
+--   SELECT STATUS FROM ADM.PPN WHERE PPN_ID = $PPN3;  -- SUCCESS
