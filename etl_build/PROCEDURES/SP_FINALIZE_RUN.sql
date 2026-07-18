@@ -48,13 +48,13 @@ BEGIN
     CALL ADM.SP_LOG_STEP(
         P_PPN_ID      => :v_ppn,
         P_PHASE       => 'GATE_CHECK',
-        P_STATUS      => IFF(v_gate_verdict = 'PASS', 'SUCCESS', 'ERROR'),
+        P_STATUS      => IFF(:v_gate_verdict = 'PASS', 'SUCCESS', 'ERROR'),
         P_LOG_START   => :v_started_at,
         P_LOG_END     => CURRENT_TIMESTAMP(),
-        P_MESSAGE     => 'GATE ' || v_gate_verdict || ': ' || v_reason,
+        P_MESSAGE     => 'GATE ' || :v_gate_verdict || ': ' || :v_reason,
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_FINALIZE_RUN','ppn_id',:v_ppn),
-            'gate', v_gate
+            'gate', :v_gate
         )::STRING
     ) INTO :v_log;
 
@@ -99,7 +99,7 @@ EXCEPTION
         -- Genuine unexpected engine error (v_error_msg NULL) may have left the run un-closed -> close it.
         IF (v_error_msg IS NULL) THEN
             BEGIN
-                CALL ADM.SP_CLOSE_PPN(:v_ppn, 'ERROR', 'SP_FINALIZE_RUN failed: ' || v_final) INTO :v_close;
+                CALL ADM.SP_CLOSE_PPN(:v_ppn, 'ERROR', 'SP_FINALIZE_RUN failed: ' || :v_final) INTO :v_close;
             EXCEPTION
                 WHEN OTHER THEN NULL;
             END;

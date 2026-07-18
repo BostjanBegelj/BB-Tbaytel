@@ -79,6 +79,7 @@ BEGIN
     END IF;
     IF (UPPER(COALESCE(GET(v_land, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','LANDING',
+                                'message', COALESCE(GET(v_land,'message')::STRING, 'landing failed'),
                                 'source_id',v_source_id,'table',v_table,'ppn_id',v_ppn_id,'landing_result',v_land);
     END IF;
 
@@ -87,6 +88,7 @@ BEGIN
     CALL ADM.SP_CHECK_DATA_CHANGE(:v_ppn_id, :v_source_id, :v_table) INTO :v_check;
     IF (UPPER(COALESCE(GET(v_check, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','CHECK',
+                                'message', COALESCE(GET(v_check,'message')::STRING, 'check-data-change failed'),
                                 'source_id',v_source_id,'table',v_table,'ppn_id',v_ppn_id,'check_result',v_check);
     END IF;
 
@@ -104,6 +106,7 @@ BEGIN
     CALL ADM.SP_LOAD_BRONZE_TO_HIST(:v_ppn_id, :v_source_id, :v_table) INTO :v_hist;
     IF (UPPER(COALESCE(GET(v_hist, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','HIST',
+                                'message', COALESCE(GET(v_hist,'message')::STRING, 'hist load failed'),
                                 'source_id',v_source_id,'table',v_table,'ppn_id',v_ppn_id,'hist_result',v_hist);
     END IF;
 
@@ -112,6 +115,7 @@ BEGIN
     CALL ADM.SP_LOAD_BRONZE_TO_SILVER(:v_ppn_id, :v_source_id, :v_table) INTO :v_silver;
     IF (UPPER(COALESCE(GET(v_silver, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','SILVER',
+                                'message', COALESCE(GET(v_silver,'message')::STRING, 'silver load failed'),
                                 'source_id',v_source_id,'table',v_table,'ppn_id',v_ppn_id,'silver_result',v_silver);
     END IF;
 
@@ -131,7 +135,7 @@ EXCEPTION
             CALL ADM.SP_LOG_STEP(
                 P_PPN_ID => :v_ppn_id, P_PHASE => 'RUN_TABLE_LOAD', P_STATUS => 'ERROR',
                 P_SOURCE_ID => :v_source_id, P_TABLE_NAME => :v_table,
-                P_MESSAGE => 'ERROR: SP_RUN_TABLE_LOAD failed.',
+                P_MESSAGE => 'ERROR [SP_RUN_TABLE_LOAD/' || :v_phase || ']: ' || :v_final,
                 P_DETAIL_JSON => OBJECT_CONSTRUCT(
                     'ERROR', OBJECT_CONSTRUCT('source_procedure','SP_RUN_TABLE_LOAD','source_phase',:v_phase,
                         'message',:v_final_msg,'sqlcode',IFF(:v_error_msg IS NULL,:SQLCODE,NULL),

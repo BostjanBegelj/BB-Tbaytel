@@ -94,7 +94,7 @@ EXCEPTION
                     P_STATUS      => 'ERROR',
                     P_LOG_START   => :v_started_at,
                     P_LOG_END     => CURRENT_TIMESTAMP(),
-                    P_MESSAGE     => 'ERROR: SP_CLOSE_PPN failed.',
+                    P_MESSAGE     => 'ERROR [SP_CLOSE_PPN/' || :v_phase || ']: ' || :v_final_msg,
                     P_DETAIL_JSON => OBJECT_CONSTRUCT(
                         'ERROR', OBJECT_CONSTRUCT(
                             'source_procedure', 'SP_CLOSE_PPN',

@@ -214,7 +214,7 @@ EXCEPTION
                 P_TABLE_NAME  => :v_table,
                 P_LOG_START   => :v_started_at,
                 P_LOG_END     => CURRENT_TIMESTAMP(),
-                P_MESSAGE     => 'ERROR: SP_LOAD_FILE_TO_BRONZE failed.',
+                P_MESSAGE     => 'ERROR [SP_LOAD_FILE_TO_BRONZE/' || :v_phase || ']: ' || :v_final_msg,
                 P_DETAIL_JSON => OBJECT_CONSTRUCT(
                     'ERROR', OBJECT_CONSTRUCT(
                         'source_procedure', 'SP_LOAD_FILE_TO_BRONZE',

@@ -120,7 +120,7 @@ EXCEPTION
                     P_LOG_START   => :v_started_at,
                     P_LOG_END     => CURRENT_TIMESTAMP(),
                     P_ROW_COUNT   => :v_count,
-                    P_MESSAGE     => 'ERROR: ' || :v_final_msg,
+                    P_MESSAGE     => 'ERROR [SP_VALIDATE_CONFIG/' || :v_phase || ']: ' || :v_final_msg,
                     P_DETAIL_JSON => OBJECT_CONSTRUCT(
                         'ERROR', OBJECT_CONSTRUCT(
                             'source_procedure', 'SP_VALIDATE_CONFIG',
