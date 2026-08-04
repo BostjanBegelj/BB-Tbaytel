@@ -1,6 +1,6 @@
 -- ============================================================
 -- SECURITY_DB - account-wide security database
--- RUN ONCE PER ACCOUNT.  (Snowflake Standards v0.6, section 4.3)
+-- RUN ONCE PER ACCOUNT.  (Snowflake Standards v0.7, section 4.3)
 -- Unprefixed, exists once. Owned by SECURITYADMIN so security
 -- administration stays a distinct duty from platform admin
 -- (PLATFORM_DB / SYSADMIN).
@@ -37,8 +37,9 @@ GRANT OWNERSHIP ON SCHEMA SECURITY_DB.POLICIES         TO ROLE SECURITYADMIN COP
 GRANT OWNERSHIP ON DATABASE SECURITY_DB                TO ROLE SECURITYADMIN COPY CURRENT GRANTS;
 
 -- ---------------------------------------------------------------------------
--- OPTIONAL: dedicated POLICY_ADMIN role beneath SECURITYADMIN (Standards 4.3)
--- Uncomment if policy management should be delegated below SECURITYADMIN.
+-- POLICY_ADMIN - dedicated policy role beneath SECURITYADMIN (Standards 4.3)
+-- REQUIRED, not optional: 09_security_tags_masking_row_access.sql owns its
+-- tags and policies as this role and fails at the first statement without it.
 -- ---------------------------------------------------------------------------
  USE ROLE USERADMIN;
  CREATE ROLE IF NOT EXISTS POLICY_ADMIN COMMENT = 'Manages policies in SECURITY_DB';

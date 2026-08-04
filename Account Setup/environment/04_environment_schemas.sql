@@ -24,7 +24,9 @@
 -- billed on churn x days. Retention is therefore set by how hard the
 -- content is to REBUILD, not by how important it is.
 --   RAW / BRONZE          1    re-loadable from the source extract
---   SILVER / GOLD*        7    rebuildable from BRONZE_HIST; high churn
+--   SILVER / GOLD*        7    rebuildable from the layer above
+--                              (SILVER from BRONZE_HIST, GOLD from
+--                              SILVER); high churn on every load
 --   BRONZE_HIST / ADM     30   NOT rebuildable - the replay source and
 --                              the run-state / audit log. Losing either
 --                              breaks rerun and lineage.
