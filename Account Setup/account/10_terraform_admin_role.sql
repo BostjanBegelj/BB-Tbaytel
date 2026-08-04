@@ -2,7 +2,7 @@
 -- TERRAFORM_ADMIN  -  account-level deployment role
 -- RUN ONCE PER ACCOUNT (not per environment).
 --
--- Account-level: NOT prefixed with DEV_/TEST_/QA_/PROD_.
+-- Account-level: NOT prefixed with DEV_/TEST_/PROD_.
 -- One service user (SVC_TERRAFORM) uses this role to deploy all
 -- environments. USERADMIN creates/owns the role; ACCOUNTADMIN
 -- delegates the global privileges.

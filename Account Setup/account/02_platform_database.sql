@@ -49,8 +49,11 @@ CREATE SCHEMA IF NOT EXISTS REFERENCE WITH MANAGED ACCESS
   COMMENT = 'Environment-neutral static reference/lookup data (read-only to runtime)';
 CREATE SCHEMA IF NOT EXISTS FILE_FORMATS WITH MANAGED ACCESS
   COMMENT = 'Shared, environment-independent file formats (Parquet, CSV, JSON, ...)';
+-- NOTE: SHARED_WORKSPACE is a SQL schema holding cross-environment scratch
+-- objects. It is NOT the Snowsight "Workspaces" feature and has no relation
+-- to a Snowsight shared workspace (which stores files, not database objects).
 CREATE SCHEMA IF NOT EXISTS SHARED_WORKSPACE WITH MANAGED ACCESS
-  COMMENT = 'Admin/engineer cross-environment scratch and collaboration area';
+  COMMENT = 'Admin/engineer cross-environment scratch and collaboration area (SQL objects; not a Snowsight workspace)';
 
 
 -- ============================================================

@@ -144,6 +144,9 @@ INSERT INTO COUNTRY_CODE VALUES
 
 -- ============================================================
 -- SHARED_WORKSPACE - admin/engineer scratch & collaboration
+--
+-- Not the Snowsight "Workspaces" feature: this schema holds SQL objects,
+-- a Snowsight workspace holds files and is provisioned per user.
 -- ============================================================
 USE SCHEMA SHARED_WORKSPACE;
 
@@ -154,7 +157,7 @@ CREATE TABLE IF NOT EXISTS SCRATCH_EXAMPLE (
 ) COMMENT = 'Dummy: example scratch object; engineers create ad-hoc cross-env objects here';
 
 INSERT INTO SCRATCH_EXAMPLE (NOTE) VALUES
-    ('Shared workspace is for ad-hoc, non-runtime, cross-environment work.');
+    ('SHARED_WORKSPACE is for ad-hoc, non-runtime, cross-environment SQL objects. Not a Snowsight workspace.');
 
 
 -- ============================================================

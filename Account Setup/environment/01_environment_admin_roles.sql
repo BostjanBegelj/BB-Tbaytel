@@ -1,7 +1,7 @@
 -- ============================================================
 -- ENVIRONMENT ADMIN ROLES + platform provisioning access
 -- RUN PER ENVIRONMENT.  Set ENV_ABBR, then run the whole file.
---   DEV_ / TEST_ / QA_ / PROD_
+--   DEV_ / TEST_ / PROD_   (Standards v0.7 4: three environments only)
 -- ============================================================
 SET ENV_ABBR = 'DEV_';
 

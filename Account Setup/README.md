@@ -5,11 +5,15 @@ Organized by **lifecycle**, not by object type:
 
 - **`account/`** — run **once per Snowflake account**. Account-level
   objects that are not environment-specific and are never prefixed
-  with `DEV_/TEST_/QA_/PROD_`.
+  with `DEV_/TEST_/PROD_`.
 - **`environment/`** — run **once per environment**. Set `ENV_ABBR`
-  at the top of each file (`DEV_`, `TEST_`, `QA_`, `PROD_`) and run
+  at the top of each file (`DEV_`, `TEST_`, `PROD_`) and run
   the whole file. To add an environment, re-run this folder with a
   different `ENV_ABBR`.
+
+> Standards v0.7 §4 defines **three** environments — DEV, TEST, PROD —
+> in one account. Use those three prefixes only. Anything called UAT in
+> a ticket is TEST here.
 
 > Scripts are templates. Review before running. Run each file as a
 > role that can assume `ACCOUNTADMIN`/`SECURITYADMIN`/`SYSADMIN`
@@ -22,14 +26,14 @@ Organized by **lifecycle**, not by object type:
 | # | File | Creates |
 |---|------|---------|
 | 01 | `01_account_parameters.sql` | Account params (`TIMEZONE`, `STATEMENT_TIMEOUT_IN_SECONDS`, `ABORT_DETACHED_QUERY`, `PERIODIC_DATA_REKEYING`) + guard-rail resource monitor `RM_ACCOUNT_GUARD` |
-| 02 | `02_platform_database.sql` | `PLATFORM_WH` + `PLATFORM_DB` + schemas (`RBAC`, `DEPLOYMENT`, `MONITORING`, `UTIL`, `REFERENCE`, `SHARED_WORKSPACE`) |
+| 02 | `02_platform_database.sql` | `PLATFORM_WH` + `PLATFORM_DB` + schemas (`RBAC`, `DEPLOYMENT`, `MONITORING`, `UTIL`, `REFERENCE`, `FILE_FORMATS`, `SHARED_WORKSPACE`) |
 | 03 | `03_platform_rbac_procedures.sql` | Provisioning procs in `RBAC` (`CREATE_DATABASE`, `DROP_DATABASE`, `CREATE_SCHEMA`, `DROP_SCHEMA`) |
 | 04 | `04_platform_objects.sql` | Dummy scaffold objects + sample rows per PLATFORM_DB schema (incl. `ENV_CONFIG`, `ENTRA_GROUP_ROLE_MAP`) |
 | 05 | `05_security_database.sql` | `SECURITY_DB` + schemas (`INBOUND_TRAFFIC`, `OUTBOUND_TRAFFIC`, `INTERNAL_STAGE`, `POLICIES`); ownership to SECURITYADMIN |
 | 06 | `06_security_network_rules.sql` | Ingress network rules (Tbaytel, In516ht, Azure Private Link, Entra-ID SCIM) in `INBOUND_TRAFFIC` |
 | 07 | `07_security_network_policy.sql` | Account `INGRESS_POLICY` referencing the rules + **guarded** activation |
 | 08 | `08_security_auth_password_policies.sql` | Account password + authentication policies (+ SSO-users policy) in `POLICIES` + **guarded** activation |
-| 09 | `09_security_masking_row_access_templates.sql` | Masking / row-access policy templates (do not run as-is) |
+| 09 | `09_security_tags_masking_row_access.sql` | Governance tags (`DATA_CLASSIFICATION`, `PII_TYPE`), tag-driven masking policies, `PII_READER` exemption role, `RAP_DOMAIN` row-access policy + mapping table. **Deployable as-is** — nothing is masked until a column is tagged |
 | 10 | `10_terraform_admin_role.sql` | `TERRAFORM_ADMIN` account role + global grants |
 | 11 | `11_terraform_service_user.sql` | `SVC_TERRAFORM` service user (key-pair) |
 | 12 | `12_human_access.sql` | Reference: people come via SSO/SCIM; optional break-glass admin |
@@ -53,6 +57,11 @@ Groups: **platform** (02–04) · **security** (05–09) · **terraform + human 
 > objects → `SECURITY_DB`, per-environment data → `{ENV}_DB`). The objects in
 > `04` are dummy placeholders illustrating the intended content of each schema.
 
+> `PLATFORM_DB.SHARED_WORKSPACE` is a SQL scratch/collaboration schema. It is
+> **not** the Snowsight **Workspaces** feature, which holds per-user *files*
+> rather than database objects — a confusion that surfaced on TBAY-372. The
+> name matches Standards v0.7; the distinction is documented in `02` and `04`.
+
 Integration notes: only **Git** has a truly free/public test path (a
 public repo needs no credentials; your personal repo works via OAuth or
 PAT if private). **S3** can be read-tested for free via a credential-less
@@ -75,10 +84,19 @@ option — they need your own tenant/org plus credentials.
 | # | File | Purpose |
 |---|------|---------|
 | 01 | `01_validate_state.sql` | Object/role/grant inventory + ownership drift check; also the basis for generating the Terraform `imports.tf` list |
+| 02 | `02_validate_access_isolation.sql` | Negative access tests: cross-environment grant scan, statements that **must fail** per role, positive controls, evidence capture |
 
-Run it after the account and environment layers and save the output with the
-release. Read-only (`SHOW` + `ACCOUNT_USAGE` queries); note `ACCOUNT_USAGE`
-grant views can lag by up to ~2 hours.
+`01` answers *was everything created?*; `02` answers *is it actually isolated?*
+An inventory can look perfect while one stray grant lets DEV write PROD. `02`
+needs more than one environment to be meaningful, and its Part 2/3 are
+real-time — use them straight after a deployment, before `ACCOUNT_USAGE`
+catches up. Together they cover TBAY-372 AC4–AC8 and the test evidence in AC10.
+
+Run them after the account and environment layers and save the output with the
+release. `01` is read-only (`SHOW` + `ACCOUNT_USAGE` queries); note `ACCOUNT_USAGE`
+grant views can lag by up to ~2 hours. `02` is read-only in Part 1 but creates
+and drops a throwaway table in Parts 2–3, so it is not safe to run blind — read
+it first.
 
 ## Key design points
 
