@@ -10,9 +10,19 @@ USE ROLE ACCOUNTADMIN;
 -- Account parameter defaults
 -- ------------------------------------------------------------
 ALTER ACCOUNT SET TIMEZONE = 'America/Toronto';
+-- Limit normal statements to one hour.
+-- Consider longer overrides for ETL users or warehouses.
 ALTER ACCOUNT SET STATEMENT_TIMEOUT_IN_SECONDS = 3600;
+
+-- Cancel queries approximately five minutes after an unexpected
+-- client disconnection. Test this behavior with ADF and CI/CD clients.
 ALTER ACCOUNT SET ABORT_DETACHED_QUERY = TRUE;
-ALTER ACCOUNT SET PERIODIC_DATA_REKEYING = TRUE;   -- Business Critical edition only
+
+-- Enable annual re-encryption of table data.
+-- Available with Enterprise Edition or higher.
+-- May generate additional Fail-safe storage costs.
+ALTER ACCOUNT SET PERIODIC_DATA_REKEYING = TRUE;
+
 
 -- ------------------------------------------------------------
 -- Guard-rail resource monitor (account-level).
