@@ -79,10 +79,11 @@ option — they need your own tenant/org plus credentials.
 | 04 | `04_environment_schemas.sql` | 9 medallion schemas + retention tiers + RO/FULL role grants |
 | 05 | `05_environment_service_users.sql` | `SVC_{ENV}_ADF` (`{ENV}_DATA_LOADER`), `SVC_{ENV}_POWERBI` (`{ENV}_REPORTER`), `SVC_{ENV}_DEPLOY` (`{ENV}_DEPLOYER`) — all key-pair |
 
-### 3. validation/ (run after each deployment)
+### 3. validation/ (`00` first, the rest after each deployment)
 
 | # | File | Purpose |
 |---|------|---------|
+| 00 | `00_edition_capability_probe.sql` | **Run first on any new account.** Proves empirically that Time Travel > 1 day, tags, masking policies, row access policies and tag-based policy attachment all work — i.e. that the account is Enterprise or higher. Every statement fails on Standard. Creates and drops a throwaway database. `SHOW ORGANIZATION ACCOUNTS` returns no rows on a trial, so it cannot be used to read the edition. |
 | 01 | `01_validate_state.sql` | Object/role/grant inventory + ownership drift check; also the basis for generating the Terraform `imports.tf` list |
 | 02 | `02_validate_access_isolation.sql` | Negative access tests: cross-environment grant scan, statements that **must fail** per role, positive controls, evidence capture |
 
