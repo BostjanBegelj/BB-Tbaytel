@@ -84,7 +84,7 @@ CREATE RESOURCE MONITOR IF NOT EXISTS RM_ACCOUNT_GUARD WITH
   -- warning does not go unread. Uncomment AFTER verifying the user's
   -- email in Snowsight - naming a user without a verified email makes
   -- this statement fail.
-  -- NOTIFY_USERS  = ('BOSTJANB')
+   NOTIFY_USERS  = ('BOSTJANB')
   TRIGGERS ON  70 PERCENT DO NOTIFY
            ON  90 PERCENT DO SUSPEND
            ON 100 PERCENT DO SUSPEND_IMMEDIATE;
