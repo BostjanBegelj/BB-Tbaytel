@@ -4,13 +4,13 @@
 -- Unprefixed, exists once. Owned by SECURITYADMIN so security
 -- administration stays a distinct duty from platform admin
 -- (PLATFORM_DB / SYSADMIN).
--- ============================================================
 --
 -- Schemas (network rules organised by direction, policies together):
---   INBOUND_TRAFFIC  - ingress network rules (customer, In516ht, Private Link / VNet)
+--   INBOUND_TRAFFIC  - ingress network rules (Tbaytel, Blend, Private Link / VNet)
 --   OUTBOUND_TRAFFIC - egress network rules (external access integrations)
 --   INTERNAL_STAGE   - network rules restricting internal stage access
 --   POLICIES         - authentication, password, masking and row-access policies
+-- ============================================================
 
 -- SECURITYADMIN cannot create databases; ACCOUNTADMIN creates and transfers ownership
 USE ROLE ACCOUNTADMIN;
@@ -36,16 +36,32 @@ GRANT OWNERSHIP ON SCHEMA SECURITY_DB.INTERNAL_STAGE   TO ROLE SECURITYADMIN COP
 GRANT OWNERSHIP ON SCHEMA SECURITY_DB.POLICIES         TO ROLE SECURITYADMIN COPY CURRENT GRANTS;
 GRANT OWNERSHIP ON DATABASE SECURITY_DB                TO ROLE SECURITYADMIN COPY CURRENT GRANTS;
 
--- ---------------------------------------------------------------------------
--- POLICY_ADMIN - dedicated policy role beneath SECURITYADMIN (Standards 4.3)
--- REQUIRED, not optional: 09_security_tags_masking_row_access.sql owns its
--- tags and policies as this role and fails at the first statement without it.
--- ---------------------------------------------------------------------------
- USE ROLE USERADMIN;
- CREATE ROLE IF NOT EXISTS POLICY_ADMIN COMMENT = 'Manages policies in SECURITY_DB';
- GRANT ROLE POLICY_ADMIN TO ROLE SECURITYADMIN;
- USE ROLE SECURITYADMIN;
- GRANT USAGE ON DATABASE SECURITY_DB TO ROLE POLICY_ADMIN;
- GRANT USAGE, CREATE MASKING POLICY, CREATE ROW ACCESS POLICY,
-       CREATE PASSWORD POLICY, CREATE AUTHENTICATION POLICY
-   ON SCHEMA SECURITY_DB.POLICIES TO ROLE POLICY_ADMIN;
+
+-- ------------------------------------------------------------
+-- POLICY_ADMIN - policy role beneath SECURITYADMIN (Standards 4.3).
+-- Required: 09 creates its tags and policies as this role.
+-- Account-level APPLY privileges are granted in 09, where they are used.
+-- ------------------------------------------------------------
+USE ROLE USERADMIN;
+CREATE ROLE IF NOT EXISTS POLICY_ADMIN COMMENT = 'Manages policies in SECURITY_DB';
+GRANT ROLE POLICY_ADMIN TO ROLE SECURITYADMIN;
+
+USE ROLE SECURITYADMIN;
+GRANT USAGE ON DATABASE SECURITY_DB TO ROLE POLICY_ADMIN;
+GRANT USAGE, CREATE MASKING POLICY, CREATE ROW ACCESS POLICY,
+      CREATE PASSWORD POLICY, CREATE AUTHENTICATION POLICY,
+      CREATE TAG, CREATE TABLE
+  ON SCHEMA SECURITY_DB.POLICIES TO ROLE POLICY_ADMIN;
+
+
+-- ============================================================
+-- VALIDATION
+-- ============================================================
+-- Expect 4 schemas, all owned by SECURITYADMIN. No PUBLIC.
+SHOW SCHEMAS IN DATABASE SECURITY_DB;
+
+-- Expect SECURITYADMIN as owner of the database.
+SHOW DATABASES LIKE 'SECURITY_DB';
+
+-- Expect the grants above on POLICY_ADMIN.
+SHOW GRANTS TO ROLE POLICY_ADMIN;

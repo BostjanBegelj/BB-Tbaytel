@@ -45,11 +45,7 @@
 -- ============================================================
 USE ROLE SECURITYADMIN;
 
-GRANT CREATE TAG   ON SCHEMA SECURITY_DB.POLICIES TO ROLE POLICY_ADMIN;
--- CREATE TABLE: the row-access mapping table lives here and is owned by
--- POLICY_ADMIN, so the policy body can read it under the owner's rights.
-GRANT CREATE TABLE ON SCHEMA SECURITY_DB.POLICIES TO ROLE POLICY_ADMIN;
-
+-- POLICY_ADMIN and its schema-level CREATE grants come from 05.
 -- Account-level APPLY privileges: needed to bind a policy to a tag and
 -- to tag columns in the environment databases.
 GRANT APPLY MASKING POLICY    ON ACCOUNT TO ROLE POLICY_ADMIN;

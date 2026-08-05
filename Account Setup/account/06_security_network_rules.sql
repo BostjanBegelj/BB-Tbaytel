@@ -23,15 +23,15 @@ ALTER NETWORK RULE SECURITY_DB.INBOUND_TRAFFIC.TBAYTEL_NETWORK SET
   VALUE_LIST = ('0.0.0.0/0') -- TODO replace with actual Tbaytel IP ranges
   COMMENT = 'Tbaytel corporate IP ranges';
 
--- In516ht network
-CREATE NETWORK RULE IF NOT EXISTS SECURITY_DB.INBOUND_TRAFFIC.IN516HT_NETWORK
+-- Blend delivery-team network
+CREATE NETWORK RULE IF NOT EXISTS SECURITY_DB.INBOUND_TRAFFIC.BLEND_NETWORK
   TYPE = IPV4
   MODE = INGRESS
   VALUE_LIST = ('89.212.52.137/32');
 
-ALTER NETWORK RULE SECURITY_DB.INBOUND_TRAFFIC.IN516HT_NETWORK SET
+ALTER NETWORK RULE SECURITY_DB.INBOUND_TRAFFIC.BLEND_NETWORK SET
   VALUE_LIST = ('89.212.52.137/32')
-  COMMENT = 'In516ht IP ranges';
+  COMMENT = 'Blend delivery-team IP ranges';
 
 -- Azure Private Link private endpoint(s) - client/BI/ADF traffic arrives over
 -- the Microsoft backbone from the Tbaytel VNet (Standards 3 / 4.3)
