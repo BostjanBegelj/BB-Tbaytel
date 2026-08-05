@@ -184,3 +184,11 @@ BEGIN
 
     RETURN 'Schema ' || :database_name || '.' || :schema_name || ' was dropped.';
 END;
+
+
+-- ============================================================
+-- VALIDATION
+-- ============================================================
+-- Expect 4 procedures: CREATE_DATABASE, DROP_DATABASE,
+-- CREATE_SCHEMA, DROP_SCHEMA.
+SHOW PROCEDURES IN SCHEMA PLATFORM_DB.RBAC;

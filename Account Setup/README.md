@@ -28,7 +28,7 @@ Organized by **lifecycle**, not by object type:
 | 01 | `01_account_parameters.sql` | Account params (`TIMEZONE`, `STATEMENT_TIMEOUT_IN_SECONDS`, `ABORT_DETACHED_QUERY`, `PERIODIC_DATA_REKEYING`) + guard-rail resource monitor `RM_ACCOUNT_GUARD` |
 | 02 | `02_platform_database.sql` | `PLATFORM_WH` + `PLATFORM_DB` + schemas (`RBAC`, `DEPLOYMENT`, `MONITORING`, `UTIL`, `REFERENCE`, `FILE_FORMATS`, `SHARED_WORKSPACE`) |
 | 03 | `03_platform_rbac_procedures.sql` | Provisioning procs in `RBAC` (`CREATE_DATABASE`, `DROP_DATABASE`, `CREATE_SCHEMA`, `DROP_SCHEMA`) |
-| 04 | `04_platform_objects.sql` | Dummy scaffold objects + sample rows per PLATFORM_DB schema (incl. `ENV_CONFIG`, `ENTRA_GROUP_ROLE_MAP`) |
+| 04 | `04_platform_objects.sql` | `MONITORING` views over `ACCOUNT_USAGE`: `V_WAREHOUSE_CREDITS`, `V_CREDITS_BY_SERVICE` (incl. serverless), `V_GRANTS_TO_ROLES` |
 | 05 | `05_security_database.sql` | `SECURITY_DB` + schemas (`INBOUND_TRAFFIC`, `OUTBOUND_TRAFFIC`, `INTERNAL_STAGE`, `POLICIES`); ownership to SECURITYADMIN |
 | 06 | `06_security_network_rules.sql` | Ingress network rules (Tbaytel, In516ht, Azure Private Link, Entra-ID SCIM) in `INBOUND_TRAFFIC` |
 | 07 | `07_security_network_policy.sql` | Account `INGRESS_POLICY` referencing the rules + **guarded** activation |
@@ -54,8 +54,11 @@ Groups: **platform** (02–04) · **security** (05–09) · **terraform + human 
 > read the lockout warnings and verify access before enabling them.
 
 > `PLATFORM_DB` holds account-wide **non-security** admin content only (security
-> objects → `SECURITY_DB`, per-environment data → `{ENV}_DB`). The objects in
-> `04` are dummy placeholders illustrating the intended content of each schema.
+> objects → `SECURITY_DB`, per-environment data → `{ENV}_DB`). Only schemas with
+> real content are populated — `RBAC` (procedures, from `03`) and `MONITORING`
+> (views, from `04`). `UTIL`, `REFERENCE` and `SHARED_WORKSPACE` exist as empty
+> containers by design; the schema and its access roles are the contract, and
+> objects appear when there is something real to put in them.
 
 > `PLATFORM_DB.SHARED_WORKSPACE` is a SQL scratch/collaboration schema. It is
 > **not** the Snowsight **Workspaces** feature, which holds per-user *files*
