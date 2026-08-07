@@ -31,7 +31,7 @@ GRANT USAGE ON INTEGRATION AZURE_BLOB_INTEGRATION TO ROLE DEV_TRANSFORMER;
 
 
 -- ------------------------------------------------------------
--- Example external stage (SCHEMA object - move to ETL/environment).
+-- Example external stage (SCHEMA object - belongs in etl_build/EXT_STAGE).
 -- ------------------------------------------------------------
 -- USE ROLE DEV_DATA_LOADER;
 -- CREATE OR REPLACE STAGE DEV_DB.RAW.AZURE_BLOB_STAGE
