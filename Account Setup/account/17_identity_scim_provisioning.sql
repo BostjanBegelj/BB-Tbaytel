@@ -26,6 +26,35 @@ CREATE SECURITY INTEGRATION IF NOT EXISTS AAD_PROVISIONING
 
 
 -- ------------------------------------------------------------
+-- SCIM network policy - required once INGRESS_POLICY is enforced.
+--
+-- Entra SCIM has no private path: the integration must point at the
+-- PUBLIC account endpoint (not the .privatelink URL) even when Private
+-- Link is in use, so provisioning traffic arrives from Microsoft's
+-- public ranges. Snowflake currently requires ALL Azure public-cloud
+-- ranges to be allowed.
+--
+-- A policy on the integration OVERRIDES the account policy for this
+-- integration only, so those ranges never widen normal user access.
+-- That is why they are not in INGRESS_POLICY.
+--
+-- Azure publishes the ranges as a weekly JSON download; they change, so
+-- this needs a refresh process, not a one-off paste.
+-- ------------------------------------------------------------
+-- CREATE NETWORK RULE IF NOT EXISTS SECURITY_DB.INBOUND_TRAFFIC.ENTRAID_SCIM
+--   TYPE = IPV4
+--   MODE = INGRESS
+--   VALUE_LIST = ('<Azure public cloud ranges>');   -- TODO from Microsoft's published list
+--
+-- CREATE NETWORK POLICY IF NOT EXISTS SCIM_POLICY
+--   ALLOWED_NETWORK_RULE_LIST = ('SECURITY_DB.INBOUND_TRAFFIC.ENTRAID_SCIM')
+--   COMMENT = 'Entra SCIM provisioning only. Scoped to the AAD_PROVISIONING integration.';
+--
+-- ALTER SECURITY INTEGRATION AAD_PROVISIONING SET NETWORK_POLICY = SCIM_POLICY;
+-- -- to remove:  ALTER SECURITY INTEGRATION AAD_PROVISIONING UNSET NETWORK_POLICY;
+
+
+-- ------------------------------------------------------------
 -- RUNTIME (not prepared ahead): generate the provisioning token and
 -- paste it into the Entra provisioning app. Shown ONCE; valid ~6
 -- months; regenerate before expiry or provisioning silently stops.

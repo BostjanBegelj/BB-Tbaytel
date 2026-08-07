@@ -11,9 +11,11 @@ CREATE NETWORK POLICY IF NOT EXISTS INGRESS_POLICY
   ALLOWED_NETWORK_RULE_LIST = (
     'SECURITY_DB.INBOUND_TRAFFIC.TBAYTEL_NETWORK',
     'SECURITY_DB.INBOUND_TRAFFIC.BLEND_NETWORK'--,
-  --  'SECURITY_DB.INBOUND_TRAFFIC.AZURE_PRIVATE_LINK',
- --   'SECURITY_DB.INBOUND_TRAFFIC.ENTRAID_SCIM'
+  --  'SECURITY_DB.INBOUND_TRAFFIC.AZURE_PRIVATE_LINK'
   )
+  -- Entra SCIM is NOT listed here by design. It requires all Azure
+  -- public-cloud ranges, which do not belong in an account-wide policy.
+  -- It gets its own policy on the SCIM integration - see 17.
   COMMENT = 'Account ingress policy - rules maintained in SECURITY_DB.INBOUND_TRAFFIC';
 
 -- to change the rule list on an existing policy, use ALTER (rules content itself

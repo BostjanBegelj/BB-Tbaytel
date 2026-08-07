@@ -30,7 +30,7 @@ Organized by **lifecycle**, not by object type:
 | 03 | `03_platform_rbac_procedures.sql` | Provisioning procs in `RBAC` (`CREATE_DATABASE`, `DROP_DATABASE`, `CREATE_SCHEMA`, `DROP_SCHEMA`) |
 | 04 | `04_platform_objects.sql` | `MONITORING` views over `ACCOUNT_USAGE`: `V_WAREHOUSE_CREDITS`, `V_CREDITS_BY_SERVICE` (incl. serverless), `V_GRANTS_TO_ROLES` |
 | 05 | `05_security_database.sql` | `SECURITY_DB` + schemas (`INBOUND_TRAFFIC`, `OUTBOUND_TRAFFIC`, `INTERNAL_STAGE`, `POLICIES`); ownership to SECURITYADMIN |
-| 06 | `06_security_network_rules.sql` | Ingress network rules (Tbaytel, Blend, Azure Private Link, Entra-ID SCIM) in `INBOUND_TRAFFIC` |
+| 06 | `06_security_network_rules.sql` | Ingress network rules (Tbaytel, Blend, Azure Private Link) in `INBOUND_TRAFFIC`. Entra SCIM is **not** here — it needs all Azure public ranges and gets its own policy on the integration in `17` |
 | 07 | `07_security_network_policy.sql` | Account `INGRESS_POLICY` referencing the rules + **guarded** activation |
 | 08 | `08_security_auth_password_policies.sql` | Account password + authentication policies (+ SSO-users policy) in `POLICIES` + **guarded** activation |
 | 09 | `09_security_tags_masking_row_access.sql` | Governance tags (`DATA_CLASSIFICATION`, `PII_TYPE`), tag-driven masking policies, `PII_READER` exemption role, `RAP_DOMAIN` row-access policy + mapping table. **Deployable as-is** — nothing is masked until a column is tagged |
