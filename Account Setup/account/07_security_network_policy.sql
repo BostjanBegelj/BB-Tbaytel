@@ -40,6 +40,10 @@ CREATE NETWORK POLICY IF NOT EXISTS INGRESS_POLICY
 -- ---------------------------------------------------------------------------
 SELECT CURRENT_IP_ADDRESS(); -- must fall within an allowed rule before proceeding
 
+-- Also check WHAT is allowed, not just that you are in it. If any rule still
+-- holds the 0.0.0.0/0 placeholder, activating gives no protection at all.
+SHOW NETWORK RULES IN SCHEMA SECURITY_DB.INBOUND_TRAFFIC;
+
 -- activate at account level (run only after the check above)
 -- ALTER ACCOUNT SET NETWORK_POLICY = INGRESS_POLICY;
 

@@ -14,6 +14,14 @@
 USE ROLE SECURITYADMIN;
 
 -- Tbaytel corporate ranges
+--
+-- !! 0.0.0.0/0 IS A PLACEHOLDER AND ALLOWS EVERY IPv4 ADDRESS !!
+-- Allowed lists are a union, so this value makes the whole policy a no-op
+-- for IPv4 - it swallows the narrow BLEND_NETWORK entry and admits anyone.
+-- Harmless only while INGRESS_POLICY is inactive (see 07). Activating the
+-- policy with this value in place gives NO protection while making the
+-- account look governed, which is worse than not activating it.
+-- DO NOT ACTIVATE until the real Tbaytel ranges are in.
 CREATE NETWORK RULE IF NOT EXISTS SECURITY_DB.INBOUND_TRAFFIC.TBAYTEL_NETWORK
   TYPE = IPV4
   MODE = INGRESS
@@ -21,7 +29,7 @@ CREATE NETWORK RULE IF NOT EXISTS SECURITY_DB.INBOUND_TRAFFIC.TBAYTEL_NETWORK
 
 ALTER NETWORK RULE SECURITY_DB.INBOUND_TRAFFIC.TBAYTEL_NETWORK SET
   VALUE_LIST = ('0.0.0.0/0') -- TODO replace with actual Tbaytel IP ranges
-  COMMENT = 'Tbaytel corporate IP ranges';
+  COMMENT = 'PLACEHOLDER 0.0.0.0/0 - allows everything. Replace with Tbaytel corporate ranges before activating INGRESS_POLICY.';
 
 -- Blend delivery-team network
 CREATE NETWORK RULE IF NOT EXISTS SECURITY_DB.INBOUND_TRAFFIC.BLEND_NETWORK
