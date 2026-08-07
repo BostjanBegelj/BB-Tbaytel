@@ -194,14 +194,21 @@ CREATE MASKING POLICY IF NOT EXISTS MP_PII_TIMESTAMP_NTZ
 
 -- ============================================================
 -- 4. Bind the policies to the tag
---    One masking policy per data type per tag is the Snowflake limit.
---    FORCE makes the file re-runnable after any policy edit.
+--    A tag holds one masking policy PER DATA TYPE, so all five coexist -
+--    they do not replace one another. FORCE only replaces a policy of the
+--    SAME data type, which is what makes this re-runnable after an edit.
+--
+--    Note: once bound, neither the tag nor a policy can be dropped. UNSET
+--    the policy from the tag first:
+--      ALTER TAG PII_TYPE UNSET MASKING POLICY MP_PII_STRING;
 -- ============================================================
-ALTER TAG PII_TYPE SET MASKING POLICY MP_PII_STRING        FORCE;
-ALTER TAG PII_TYPE SET MASKING POLICY MP_PII_NUMBER        FORCE;
-ALTER TAG PII_TYPE SET MASKING POLICY MP_PII_FLOAT         FORCE;
-ALTER TAG PII_TYPE SET MASKING POLICY MP_PII_DATE          FORCE;
-ALTER TAG PII_TYPE SET MASKING POLICY MP_PII_TIMESTAMP_NTZ FORCE;
+ALTER TAG PII_TYPE SET
+  MASKING POLICY MP_PII_STRING,
+  MASKING POLICY MP_PII_NUMBER,
+  MASKING POLICY MP_PII_FLOAT,
+  MASKING POLICY MP_PII_DATE,
+  MASKING POLICY MP_PII_TIMESTAMP_NTZ
+  FORCE;
 
 
 -- ============================================================
