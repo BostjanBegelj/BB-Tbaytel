@@ -23,6 +23,17 @@ CREATE NETWORK POLICY IF NOT EXISTS INGRESS_POLICY
 -- ALTER NETWORK POLICY INGRESS_POLICY SET ALLOWED_NETWORK_RULE_LIST = ( ... );
 
 -- ---------------------------------------------------------------------------
+-- ONCE PRIVATE LINK IS LIVE - force traffic through it.
+-- Adding AZURE_PRIVATE_LINK to the ALLOWED list is not enough: private
+-- endpoint rules have no effect on public requests, so the public endpoint
+-- stays open. Blocking public access needs the BLOCKED list.
+-- Note AZURELINKID takes precedence over IPV4, so requests arriving over
+-- Private Link ignore the IPv4 rules entirely.
+-- ---------------------------------------------------------------------------
+-- ALTER NETWORK POLICY INGRESS_POLICY SET
+--   BLOCKED_NETWORK_RULE_LIST = ( 'SECURITY_DB.INBOUND_TRAFFIC.BLOCK_PUBLIC_ACCESS' );
+
+-- ---------------------------------------------------------------------------
 -- ACTIVATION - !! LOCKOUT RISK !!
 -- Before activating, verify your own current IP/endpoint is matched by one of
 -- the allowed rules, otherwise you lock yourself (and everyone) out.

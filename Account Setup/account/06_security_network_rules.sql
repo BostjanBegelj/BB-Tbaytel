@@ -44,6 +44,36 @@ ALTER NETWORK RULE SECURITY_DB.INBOUND_TRAFFIC.AZURE_PRIVATE_LINK SET
   VALUE_LIST = ('/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.Network/privateEndpoints/<pe-name>') -- TODO replace with actual LinkIdentifier(s); see SYSTEM$GET_PRIVATELINK_AUTHORIZED_ENDPOINTS()
   COMMENT = 'Azure Private Link private endpoints from the Tbaytel VNet';
 
+-- Blocking public access - needed once Private Link is live.
+--
+-- An AZURELINKID rule in the ALLOWED list does NOT block public traffic:
+-- private-endpoint rules have no effect on requests arriving over the
+-- public internet. Allowing the LinkID alone leaves the public endpoint
+-- open to whatever the IPv4 rules permit.
+--
+-- To force traffic through Private Link, this rule goes in the policy's
+-- BLOCKED list (see 07). Do not enable until Private Link is verified
+-- working - it blocks everything else, including this session.
+-- CREATE NETWORK RULE IF NOT EXISTS SECURITY_DB.INBOUND_TRAFFIC.BLOCK_PUBLIC_ACCESS
+--   TYPE = IPV4
+--   MODE = INGRESS
+--   VALUE_LIST = ('0.0.0.0/0');
+-- ALTER NETWORK RULE SECURITY_DB.INBOUND_TRAFFIC.BLOCK_PUBLIC_ACCESS SET
+--   VALUE_LIST = ('0.0.0.0/0')
+--   COMMENT = 'Blocked list only - forces traffic through Private Link';
+
+
+-- ADF, Power BI and CI/CD are NOT given their own rules.
+-- Their public source ranges are Microsoft service tags: very large and
+-- changed weekly, so allowlisting them would admit most of Azure and
+-- still break when the list moves. They reach Snowflake either over
+-- Private Link (Managed VNet endpoint / VNet data gateway / self-hosted
+-- runner) or from the corporate network - both already covered above.
+-- If a public path is ever unavoidable, scope a network policy to that
+-- SERVICE USER rather than widening this account policy: precedence is
+-- security integration > user > account.
+
+
 -- Microsoft Entra ID ranges for SCIM provisioning.
 --
 -- NOT CREATED HERE, and deliberately NOT part of INGRESS_POLICY.
