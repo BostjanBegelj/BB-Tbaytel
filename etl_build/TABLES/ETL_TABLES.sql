@@ -18,6 +18,7 @@ create or replace table adm.etl_tables (
     partition_column varchar      comment 'PARTITION load: column identifying partitions to replace.',
     target_schema    varchar      not null default 'BRONZE' comment 'Landing/target layer schema.',
     load_order       number(38,0) default 100 comment 'Ascending execution order within a run.',
+    allow_empty      boolean      not null default false comment 'FULL/INIT only: TRUE permits a zero-row snapshot (which soft-deletes all SILVER rows). FALSE fails the table instead.',
     active_flag      boolean      not null default true comment 'FALSE disables the table.',
     constraint pk_adm_etl_tables primary key (source_id, table_name),
     constraint fk_adm_etl_tables_source foreign key (source_id) references adm.etl_sources (source_id)

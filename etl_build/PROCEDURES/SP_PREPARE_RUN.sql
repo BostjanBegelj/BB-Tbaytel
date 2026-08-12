@@ -16,8 +16,12 @@
 -- (SOURCE_TYPE, TARGET_SCHEMA, LOAD_TYPE, PK_COLUMNS, PARTITION_COLUMN, stage/file settings)
 -- is still read live by the loaders at execution time.
 --
--- ADF iterates the plan:
---   SELECT SOURCE_ID, TABLE_NAME FROM ADM.PPN_PROCESS WHERE PPN_ID = ? ORDER BY LOAD_ORDER
+-- ADF iterates the plan (MUST exclude the run-level marker rows, or the DQ entry would enter
+-- the per-table ForEach once P_INCLUDE_DQ is enabled):
+--   SELECT SOURCE_ID, TABLE_NAME
+--     FROM ADM.PPN_PROCESS
+--    WHERE PPN_ID = ? AND SOURCE_ID <> '_RUN_'
+--    ORDER BY LOAD_ORDER
 --
 -- Run order: SP_CREATE_PPN -> SP_VALIDATE_CONFIG -> SP_PREPARE_RUN -> per-table loads.
 --

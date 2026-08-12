@@ -3,7 +3,10 @@
 -- No stage / no COPY: a per-PPN snapshot via CREATE OR REPLACE TABLE ... AS SELECT,
 -- so the batch is stable and idempotent per PPN. Config-driven, mirrors
 -- SP_LOAD_FILE_TO_BRONZE (same helpers, same child error pattern).
--- Full snapshot into BRONZE; incremental (WATERMARK_COLUMN) is applied later at SILVER.
+-- Always lands a FULL snapshot of the shared object into BRONZE.
+-- NOTE: WATERMARK_COLUMN is currently NOT used by this procedure or by SILVER - an INCR
+-- data-share table is landed in full and then MERGEd (correct, just not optimised). Watermark-
+-- bounded extraction is a future optimisation, not current behaviour.
 -- Writes PPN_LOG only; PPN_PROCESS state is owned by SP_RUN_TABLE_LOAD.
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 

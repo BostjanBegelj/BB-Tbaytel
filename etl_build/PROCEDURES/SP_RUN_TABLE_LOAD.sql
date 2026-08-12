@@ -1,9 +1,10 @@
 -- ADM.SP_RUN_TABLE_LOAD - per-table orchestrator (the "wrapped" model). ADF calls this
 -- ONCE per table; it chains the Snowflake phases and returns one result:
---   1. LANDING   -> SP_LOAD_FILE_TO_BRONZE (PARQUET) | SP_LOAD_SHARE_TO_BRONZE (DATASHARE)
---   2. CHANGE    -> SP_CHECK_DATA_CHANGE; if identical -> mark PPN_PROCESS SKIP and stop (no HIST/SILVER)
---   3. HIST      -> SP_LOAD_BRONZE_TO_HIST
---   4. SILVER    -> SP_LOAD_BRONZE_TO_SILVER
+--   1. LANDING     -> SP_LOAD_FILE_TO_BRONZE (PARQUET) | SP_LOAD_SHARE_TO_BRONZE (DATASHARE)
+--   2. EMPTY GUARD -> FULL/INIT with 0 rows landed and ALLOW_EMPTY=FALSE -> ERROR (see below)
+--   3. CHANGE      -> SP_CHECK_DATA_CHANGE; if identical -> mark PPN_PROCESS SKIP and stop
+--   4. HIST        -> SP_LOAD_BRONZE_TO_HIST
+--   5. SILVER      -> SP_LOAD_BRONZE_TO_SILVER
 -- STATE OWNERSHIP: this wrapper is the SOLE writer of ADM.PPN_PROCESS for the table.
 -- Children write PPN_LOG only and return a status object. The wrapper sets RUNNING at the
 -- start, SKIP on identical data, ERROR on any child failure, and SUCCESS (with counts rolled
@@ -37,6 +38,9 @@ DECLARE
     v_table       STRING  DEFAULT UPPER(NULLIF(TRIM(P_TABLE_NAME), ''));
 
     v_source_type STRING;
+    v_load_type   STRING;
+    v_allow_empty BOOLEAN DEFAULT FALSE;
+    v_landed      NUMBER  DEFAULT 0;
     v_cfg_count   NUMBER  DEFAULT 0;
 
     v_land        VARIANT;
@@ -66,8 +70,8 @@ BEGIN
         RAISE e_failed;
     END IF;
 
-    SELECT UPPER(s.source_type)
-      INTO :v_source_type
+    SELECT UPPER(s.source_type), UPPER(t.load_type), t.allow_empty
+      INTO :v_source_type, :v_load_type, :v_allow_empty
       FROM ADM.ETL_TABLES t
       JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
      WHERE t.source_id = :v_source_id AND t.table_name = :v_table AND t.active_flag AND s.active_flag;
@@ -93,6 +97,37 @@ BEGIN
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','LANDING',
                                 'message', COALESCE(GET(v_land,'message')::STRING, 'landing failed'),
                                 'source_id',v_source_id,'table',v_table,'ppn_id',v_ppn_id,'landing_result',v_land);
+    END IF;
+
+    /* 2b. EMPTY-SNAPSHOT GUARD (FULL / INIT only) -----------------------
+       A zero-row FULL/INIT snapshot is indistinguishable, downstream, from
+       "every source row disappeared" - SILVER would soft-delete the entire
+       active population. A zero-row extract is far more often a failed/empty
+       extraction, so fail the table unless ALLOW_EMPTY says an empty snapshot
+       is legitimate for it. Not applied to INCR (an empty daily delta is
+       normal) or PARTITION (deletes are scoped to the loaded partitions).   */
+    v_phase := 'EMPTY_GUARD';
+    v_landed := COALESCE(GET(v_land, 'rows_loaded')::NUMBER, 0);
+    IF (v_load_type IN ('FULL', 'INIT') AND v_landed = 0 AND NOT v_allow_empty) THEN
+        LET v_empty_msg STRING :=
+            'Empty ' || v_load_type || ' snapshot (0 rows landed) for ' || v_source_id || '.' || v_table ||
+            '. Refusing to proceed: this would soft-delete all SILVER rows. ' ||
+            'Set ETL_TABLES.ALLOW_EMPTY = TRUE if an empty snapshot is legitimate for this table.';
+        CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', 'EMPTY_GUARD',
+                                      :v_landed, NULL, NULL, NULL, :v_empty_msg, TRUE) INTO :v_log_rows;
+        CALL ADM.SP_LOG_STEP(
+            P_PPN_ID => :v_ppn_id, P_PHASE => 'EMPTY_GUARD', P_STATUS => 'ERROR',
+            P_SOURCE_ID => :v_source_id, P_TABLE_NAME => :v_table, P_ROW_COUNT => :v_landed,
+            P_MESSAGE => 'ERROR [SP_RUN_TABLE_LOAD/EMPTY_GUARD]: ' || :v_empty_msg,
+            P_DETAIL_JSON => OBJECT_CONSTRUCT(
+                'ERROR', OBJECT_CONSTRUCT('source_procedure','SP_RUN_TABLE_LOAD','source_phase','EMPTY_GUARD',
+                    'message',:v_empty_msg,'load_type',:v_load_type,'rows_loaded',:v_landed),
+                'context', OBJECT_CONSTRUCT('procedure','SP_RUN_TABLE_LOAD','ppn_id',:v_ppn_id)
+            )::STRING
+        ) INTO :v_log_rows;
+        RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','EMPTY_GUARD',
+                                'message',v_empty_msg,'source_id',v_source_id,'table',v_table,
+                                'ppn_id',v_ppn_id,'landing_result',v_land);
     END IF;
 
     /* 3. CHECK DATA CHANGE (skip HIST+SILVER if identical) -------------- */

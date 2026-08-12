@@ -36,7 +36,7 @@ sequenceDiagram
     SF-->>ADF: OK / raises on invalid config
     ADF->>SF: CALL SP_PREPARE_RUN(PPN_ID)
     Note over SF: freezes the plan — seeds PPN_PROCESS<br/>with one PENDING row per active table
-    ADF->>SF: read the frozen plan (Lookup on PPN_PROCESS, ORDER BY LOAD_ORDER)
+    ADF->>SF: read frozen plan (PPN_PROCESS, SOURCE_ID <> '_RUN_', ORDER BY LOAD_ORDER)
     SF-->>ADF: table list for THIS PPN
 
     Note over ADF,SF: PER TABLE (ForEach, by LOAD_ORDER)
@@ -71,7 +71,7 @@ sequenceDiagram
 | 2 | ADF → SF | `SP_CREATE_PPN(RUN_ID)` → returns `PPN_ID`, `PPN_TIMESTAMP` | — | `ADM.PPN` (RUNNING), `PPN_LOG` |
 | 3 | ADF → SF | `SP_VALIDATE_CONFIG(PPN_ID)` (pre-flight active config) | `ETL_SOURCES`,`ETL_TABLES` | `PPN_LOG` (raises on invalid) |
 | 3b | ADF → SF | `SP_PREPARE_RUN(PPN_ID)` — **freeze the run plan**: seed one `PENDING` row per active table | `ETL_SOURCES`,`ETL_TABLES` | `PPN_PROCESS` (PENDING), `PPN_LOG` |
-| 4 | ADF | Lookup the **frozen plan** for this PPN, order by `LOAD_ORDER` | `PPN_PROCESS` | — |
+| 4 | ADF | Lookup the **frozen plan** for this PPN, `SOURCE_ID <> '_RUN_'` (excludes the run-level DQ marker), order by `LOAD_ORDER` | `PPN_PROCESS` | — |
 | — | | **Per table (ForEach):** | | |
 | 5a | ADF → SRC/Blob | *(PARQUET only)* Copy activity: extract source → Parquet in Blob | source | Blob |
 | 6 | ADF → SF | `SP_RUN_TABLE_LOAD(PPN_ID, SOURCE_ID, TABLE)` — wraps landing (file/share) → check-change → HIST → SILVER; SKIP if identical | config, `BRONZE`, `BRONZE_HIST` | `BRONZE`/`BRONZE_HIST`/`SILVER`, `PPN_PROCESS`, `PPN_LOG` |

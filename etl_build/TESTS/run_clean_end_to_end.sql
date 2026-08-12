@@ -30,8 +30,12 @@ CALL ADM.SP_VALIDATE_CONFIG($PPN);
 --     A table never processed stays PENDING and FAILS the gate (fail-closed).
 --     (P_INCLUDE_DQ stays FALSE until AntFarm's SP_RUN_DQ_CHECKS exists.)
 CALL ADM.SP_PREPARE_RUN($PPN);
+-- This is the query ADF should iterate. SOURCE_ID <> '_RUN_' keeps run-level marker rows
+-- (the future _DQ_ entry) out of the per-table ForEach.
 SELECT SOURCE_ID, TABLE_NAME, STATUS, LOAD_ORDER
-  FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN ORDER BY LOAD_ORDER;   -- all PENDING
+  FROM ADM.PPN_PROCESS
+ WHERE PPN_ID = $PPN AND SOURCE_ID <> '_RUN_'
+ ORDER BY LOAD_ORDER;   -- all PENDING
 
 -- 3) Per-table load (wrapped): landing → check-change → HIST → SILVER, one call each.
 --    (In production ADF's ForEach iterates the frozen plan above, ordered by LOAD_ORDER.)
@@ -56,6 +60,12 @@ SELECT PPN_ID, RUN_ID, STATUS, START_TS, END_TS FROM ADM.PPN WHERE PPN_ID = $PPN
 -- Any row left PENDING means that table was never processed -> gate FAILs (by design).
 SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, LOAD_ORDER, ROWS_EXTRACTED, ROWS_MERGED, ROWS_DELETED
   FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN ORDER BY LOAD_ORDER;
+
+-- Empty-snapshot guard (optional): a FULL/INIT table landing 0 rows must ERROR, not wipe SILVER.
+--   Simulate by pointing a FULL table's FILE_PATTERN at a file with no rows, or by emptying its
+--   BRONZE table between landing and the call. Expect failed_phase = EMPTY_GUARD and
+--   PPN_PROCESS.STATUS = ERROR. Set ETL_TABLES.ALLOW_EMPTY = TRUE only if empty is legitimate.
+--   SELECT TABLE_NAME, LOAD_TYPE, ALLOW_EMPTY FROM ADM.ETL_TABLES ORDER BY 1;
 
 -- Fail-closed proof (optional): plan a run, process only SOME tables, then gate.
 --   CALL ADM.SP_CREATE_PPN('gate-negative');
