@@ -10,6 +10,7 @@
 --   PARTITION   : same MERGE, but soft-delete is scoped to only the PARTITION_COLUMN
 --                 values present in this load (untouched partitions are left alone).
 -- Config-driven; same helpers + child-error pattern. RUN_ID resolved by SP_LOG_STEP.
+-- Writes PPN_LOG only; PPN_PROCESS state is owned by SP_RUN_TABLE_LOAD.
 
 use role dev_sysadmin;
 use database dev_db;
@@ -38,6 +39,7 @@ DECLARE
     v_partition_col STRING;
     v_scope         STRING  DEFAULT '';
     v_sync          VARIANT;
+    v_txn_open      BOOLEAN DEFAULT FALSE;
     v_db            STRING  DEFAULT UPPER(CURRENT_DATABASE());
     v_bronze_fq   STRING;
     v_silver_fq   STRING;
@@ -45,7 +47,6 @@ DECLARE
     v_cols        STRING;   -- "A", "B", ...
     v_src_cols    STRING;   -- src."A", src."B", ...
     v_update_set  STRING;   -- tgt."A" = src."A", ...
-    v_row_concat  STRING;   -- COALESCE(TO_VARCHAR("A"),'') || '|~|' || ...
     v_row_hk      STRING;
     v_pk_hk       STRING;
     v_src_select  STRING;
@@ -104,10 +105,9 @@ BEGIN
         COUNT(*),
         LISTAGG('"' || COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY ORDINAL_POSITION),
         LISTAGG('src."' || COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY ORDINAL_POSITION),
-        LISTAGG('tgt."' || COLUMN_NAME || '" = src."' || COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY ORDINAL_POSITION),
-        LISTAGG('COALESCE(TO_VARCHAR("' || COLUMN_NAME || '"), '''')', ' || ''|~|'' || ') WITHIN GROUP (ORDER BY ORDINAL_POSITION)
-      INTO :v_col_count, :v_cols, :v_src_cols, :v_update_set, :v_row_concat
-      FROM DEV_DB.INFORMATION_SCHEMA.COLUMNS
+        LISTAGG('tgt."' || COLUMN_NAME || '" = src."' || COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY ORDINAL_POSITION)
+      INTO :v_col_count, :v_cols, :v_src_cols, :v_update_set
+      FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = :v_src_sch
        AND TABLE_NAME = :v_table
        AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'METADATA$FILENAME');
@@ -117,11 +117,13 @@ BEGIN
         RAISE e_failed;
     END IF;
 
-    v_row_hk := 'MD5(' || v_row_concat || ')';
+    -- NULL-safe + delimiter-safe: JSON-serialize the column array before hashing.
+    -- NULL stays JSON null (distinct from ''); the array removes delimiter ambiguity.
+    v_row_hk := 'MD5(TO_JSON(ARRAY_CONSTRUCT(' || v_cols || ')))';
 
     IF (v_pk_columns IS NOT NULL AND TRIM(v_pk_columns) <> '') THEN
-        SELECT 'MD5(' || LISTAGG('COALESCE(TO_VARCHAR("' || TRIM(VALUE) || '"), '''')', ' || ''|~|'' || ')
-                          WITHIN GROUP (ORDER BY INDEX) || ')'
+        SELECT 'MD5(TO_JSON(ARRAY_CONSTRUCT(' ||
+                 LISTAGG('"' || TRIM(VALUE) || '"', ', ') WITHIN GROUP (ORDER BY INDEX) || ')))'
           INTO :v_pk_hk
           FROM TABLE(SPLIT_TO_TABLE(:v_pk_columns, ','));
     ELSE
@@ -134,10 +136,8 @@ BEGIN
         'FROM ' || v_bronze_fq || ' WHERE PPN_ID = ' || v_ppn_id ||
         ' QUALIFY ROW_NUMBER() OVER (PARTITION BY ' || v_pk_hk || ' ORDER BY 1) = 1';
 
-    /* mark state RUNNING */
-    CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'RUNNING', 'LOAD_BRONZE_TO_SILVER');
-
     /* 4. ENSURE SILVER TABLE EXISTS (structure) ------------------------- */
+    /*    DDL — must run OUTSIDE the transaction below.                    */
     v_phase := 'CREATE_SILVER';
     v_sql := 'CREATE TABLE IF NOT EXISTS ' || v_silver_fq || ' AS SELECT ' || v_cols || ', ' ||
              v_pk_hk || ' AS PK_HK, ' || v_row_hk || ' AS ROW_HK, FALSE AS IS_DELETED, ' ||
@@ -170,7 +170,15 @@ BEGIN
         ) INTO :v_log_rows;
     END IF;
 
-    /* 5. MERGE (insert / update-on-change / un-delete) ------------------ */
+    /* 5. MERGE + SOFT-DELETE (ATOMIC) ----------------------------------- */
+    /*    One transaction: the merge and the soft-delete sweep are a single
+          logical state change; a failure between them would leave SILVER with
+          upserts applied but deletions unflagged. Procedures are NOT atomic by
+          default in Snowflake, so the transaction is explicit.              */
+    v_phase := 'SILVER_TXN';
+    v_txn_open := TRUE;
+    EXECUTE IMMEDIATE 'BEGIN TRANSACTION';
+
     v_phase := 'MERGE';
     v_sql := 'MERGE INTO ' || v_silver_fq || ' tgt USING (' || v_src_select || ') src ON tgt.PK_HK = src.PK_HK ' ||
              'WHEN MATCHED AND tgt.ROW_HK <> src.ROW_HK THEN UPDATE SET ' || v_update_set ||
@@ -198,10 +206,11 @@ BEGIN
         v_deleted := SQLROWCOUNT;
     END IF;
 
-    /* 7. STATE + LOG SUCCESS ------------------------------------------- */
+    EXECUTE IMMEDIATE 'COMMIT';
+    v_txn_open := FALSE;
+
+    /* 7. LOG SUCCESS (state is owned by SP_RUN_TABLE_LOAD) -------------- */
     v_phase := 'LOG_SUCCESS';
-    CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'SUCCESS', 'LOAD_BRONZE_TO_SILVER',
-                                  NULL, :v_merged, NULL, :v_deleted, NULL, NULL, TRUE);
     CALL ADM.SP_LOG_STEP(
         P_PPN_ID      => :v_ppn_id,
         P_PHASE       => 'LOAD_BRONZE_TO_SILVER',
@@ -235,9 +244,15 @@ BEGIN
 EXCEPTION
     WHEN OTHER THEN
         LET v_final_msg STRING := COALESCE(v_error_msg, SQLERRM);
+        -- undo a half-applied SILVER change (merge without its delete sweep)
+        IF (v_txn_open) THEN
+            BEGIN
+                EXECUTE IMMEDIATE 'ROLLBACK';
+            EXCEPTION
+                WHEN OTHER THEN NULL;
+            END;
+        END IF;
         BEGIN
-            CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', :v_phase,
-                                          NULL, NULL, NULL, NULL, NULL, :v_final_msg, TRUE);
             CALL ADM.SP_LOG_STEP(
                 P_PPN_ID      => :v_ppn_id,
                 P_PHASE       => 'LOAD_BRONZE_TO_SILVER',

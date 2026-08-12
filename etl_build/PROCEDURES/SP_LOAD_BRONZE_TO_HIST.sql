@@ -2,6 +2,7 @@
 -- BRONZE_HIST (the immutable per-load history / lineage). Idempotent per PPN:
 -- rows for the PPN are deleted before insert, so re-running a PPN never duplicates.
 -- Source-type agnostic (works for Parquet- and share-landed tables alike).
+-- Writes PPN_LOG only; PPN_PROCESS state is owned by SP_RUN_TABLE_LOAD.
 -- History schema is derived as <TARGET_SCHEMA>_HIST (BRONZE -> BRONZE_HIST).
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 
@@ -33,6 +34,7 @@ DECLARE
     v_hist_fq     STRING;
     v_cols_all    STRING;
     v_sync        VARIANT;
+    v_txn_open    BOOLEAN DEFAULT FALSE;
 
     v_cfg_count   NUMBER  DEFAULT 0;
     v_row_count   NUMBER  DEFAULT 0;
@@ -76,10 +78,8 @@ BEGIN
     v_src_fq   := '"' || v_db || '"."' || v_src_sch  || '"."' || v_table || '"';
     v_hist_fq  := '"' || v_db || '"."' || v_hist_sch || '"."' || v_table || '"';
 
-    /* mark state RUNNING */
-    CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'RUNNING', 'LOAD_BRONZE_TO_HIST');
-
     /* 3. RECONCILE HISTORY STRUCTURE TO BRONZE (create / add columns) --- */
+    /*    DDL first — must run OUTSIDE the transaction below.             */
     v_phase := 'SYNC_HIST';
     CALL ADM.SP_SYNC_TABLE_STRUCTURE(:v_src_sch, :v_hist_sch, :v_table) INTO :v_sync;
     IF (GET(:v_sync, 'status')::STRING <> 'SUCCESS') THEN
@@ -106,10 +106,17 @@ BEGIN
     -- all BRONZE columns (explicit list so extra history columns don't misalign)
     SELECT LISTAGG('"' || COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY ORDINAL_POSITION)
       INTO :v_cols_all
-      FROM DEV_DB.INFORMATION_SCHEMA.COLUMNS
+      FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = :v_src_sch AND TABLE_NAME = :v_table;
 
-    /* 4. IDEMPOTENT APPEND: delete this PPN, then insert --------------- */
+    /* 4. IDEMPOTENT APPEND (ATOMIC): delete this PPN, then insert ------- */
+    /*    One transaction: a failure mid-way must not leave history with the
+          old rows deleted and the new ones missing. Procedures are NOT atomic
+          by default in Snowflake, so the transaction is explicit.           */
+    v_phase := 'APPEND_TXN';
+    v_txn_open := TRUE;
+    EXECUTE IMMEDIATE 'BEGIN TRANSACTION';
+
     v_phase := 'DELETE_PPN';
     v_sql := 'DELETE FROM ' || v_hist_fq || ' WHERE PPN_ID = ' || v_ppn_id;
     v_last_sql := v_sql;
@@ -121,14 +128,15 @@ BEGIN
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
+    EXECUTE IMMEDIATE 'COMMIT';
+    v_txn_open := FALSE;
+
     /* 5. COUNT ---------------------------------------------------------- */
     v_phase := 'COUNT';
     SELECT COUNT(*) INTO :v_row_count FROM IDENTIFIER(:v_hist_fq) WHERE PPN_ID = :v_ppn_id;
 
-    /* 6. STATE + LOG SUCCESS ------------------------------------------- */
+    /* 6. LOG SUCCESS (state is owned by SP_RUN_TABLE_LOAD) -------------- */
     v_phase := 'LOG_SUCCESS';
-    CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'SUCCESS', 'LOAD_BRONZE_TO_HIST',
-                                  NULL, :v_row_count, NULL, NULL, NULL, NULL, TRUE);
     CALL ADM.SP_LOG_STEP(
         P_PPN_ID      => :v_ppn_id,
         P_PHASE       => 'LOAD_BRONZE_TO_HIST',
@@ -160,9 +168,15 @@ BEGIN
 EXCEPTION
     WHEN OTHER THEN
         LET v_final_msg STRING := COALESCE(v_error_msg, SQLERRM);
+        -- undo a half-finished append so history is never left mid-write
+        IF (v_txn_open) THEN
+            BEGIN
+                EXECUTE IMMEDIATE 'ROLLBACK';
+            EXCEPTION
+                WHEN OTHER THEN NULL;
+            END;
+        END IF;
         BEGIN
-            CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', :v_phase,
-                                          NULL, NULL, NULL, NULL, NULL, :v_final_msg, TRUE);
             CALL ADM.SP_LOG_STEP(
                 P_PPN_ID      => :v_ppn_id,
                 P_PHASE       => 'LOAD_BRONZE_TO_HIST',

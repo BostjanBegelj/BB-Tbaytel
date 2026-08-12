@@ -85,7 +85,7 @@ BEGIN
     /* 3. NO HISTORY TABLE YET -> no previous snapshot ------------------- */
     v_phase := 'CHECK_HIST';
     SELECT COUNT(*) INTO :v_hist_exists
-      FROM DEV_DB.INFORMATION_SCHEMA.TABLES
+      FROM INFORMATION_SCHEMA.TABLES
      WHERE TABLE_SCHEMA = :v_hist_sch AND TABLE_NAME = :v_table;
 
     IF (v_hist_exists > 0) THEN
@@ -104,7 +104,7 @@ BEGIN
         v_phase := 'BUILD_COLS';
         SELECT LISTAGG('"' || COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY ORDINAL_POSITION)
           INTO :v_cols
-          FROM DEV_DB.INFORMATION_SCHEMA.COLUMNS
+          FROM INFORMATION_SCHEMA.COLUMNS
          WHERE TABLE_SCHEMA = :v_src_sch AND TABLE_NAME = :v_table
            AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'METADATA$FILENAME');
 

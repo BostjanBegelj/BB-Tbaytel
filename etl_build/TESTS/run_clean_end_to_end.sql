@@ -26,8 +26,15 @@ SELECT $PPN AS PPN_ID;
 -- 2) Pre-flight config
 CALL ADM.SP_VALIDATE_CONFIG($PPN);
 
+-- 2b) Freeze the run plan: every active table seeded PENDING.
+--     A table never processed stays PENDING and FAILS the gate (fail-closed).
+--     (P_INCLUDE_DQ stays FALSE until AntFarm's SP_RUN_DQ_CHECKS exists.)
+CALL ADM.SP_PREPARE_RUN($PPN);
+SELECT SOURCE_ID, TABLE_NAME, STATUS, LOAD_ORDER
+  FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN ORDER BY LOAD_ORDER;   -- all PENDING
+
 -- 3) Per-table load (wrapped): landing → check-change → HIST → SILVER, one call each.
---    (In production ADF's ForEach issues these, ordered by LOAD_ORDER.)
+--    (In production ADF's ForEach iterates the frozen plan above, ordered by LOAD_ORDER.)
 CALL ADM.SP_RUN_TABLE_LOAD($PPN, 'BSS_ORA',   'CUSTOMER');
 CALL ADM.SP_RUN_TABLE_LOAD($PPN, 'BSS_ORA',   'SERVICE_PLAN');
 CALL ADM.SP_RUN_TABLE_LOAD($PPN, 'BSS_ORA',   'USAGE_DAILY');
@@ -45,9 +52,17 @@ CALL ADM.SP_FINALIZE_RUN($PPN);
 -- Run header: STATUS = SUCCESS, END_TS set
 SELECT PPN_ID, RUN_ID, STATUS, START_TS, END_TS FROM ADM.PPN WHERE PPN_ID = $PPN;
 
--- Per-table state: every row STATUS in (SUCCESS, SKIP) -> gate passes
-SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, ROWS_INSERTED, ROWS_DELETED
-  FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN ORDER BY SOURCE_ID, TABLE_NAME;
+-- Per-table state: every planned row STATUS in (SUCCESS, SKIP) -> gate passes.
+-- Any row left PENDING means that table was never processed -> gate FAILs (by design).
+SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, LOAD_ORDER, ROWS_EXTRACTED, ROWS_INSERTED, ROWS_DELETED
+  FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN ORDER BY LOAD_ORDER;
+
+-- Fail-closed proof (optional): plan a run, process only SOME tables, then gate.
+--   CALL ADM.SP_CREATE_PPN('gate-negative');
+--   SET PPNX = (SELECT "PPN_ID" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
+--   CALL ADM.SP_PREPARE_RUN($PPNX);
+--   CALL ADM.SP_RUN_TABLE_LOAD($PPNX, 'BSS_ORA', 'CUSTOMER');   -- only 1 of 5
+--   CALL ADM.SP_GATE_CHECK($PPNX);   -- FAIL: "4 of 5 entries not SUCCESS/SKIP (4 still PENDING...)"
 
 -- Step log: the phase trail incl. GATE_CHECK, REFRESH_GOLD (stub), CLOSE_PPN (END)
 SELECT LOG_ID, PHASE, STATUS, TABLE_NAME, ROW_COUNT, MESSAGE

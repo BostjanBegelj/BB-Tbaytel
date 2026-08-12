@@ -4,6 +4,7 @@
 -- so the batch is stable and idempotent per PPN. Config-driven, mirrors
 -- SP_LOAD_FILE_TO_BRONZE (same helpers, same child error pattern).
 -- Full snapshot into BRONZE; incremental (WATERMARK_COLUMN) is applied later at SILVER.
+-- Writes PPN_LOG only; PPN_PROCESS state is owned by SP_RUN_TABLE_LOAD.
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 
 use role dev_sysadmin;
@@ -92,9 +93,6 @@ BEGIN
 
     SELECT PPN_TIMESTAMP INTO :v_ppn_ts FROM ADM.PPN WHERE PPN_ID = :v_ppn_id;
 
-    /* mark state RUNNING */
-    CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'RUNNING', 'LOAD_SHARE_TO_BRONZE');
-
     /* 3. SNAPSHOT (CTAS) with lineage columns --------------------------- */
     v_phase := 'SNAPSHOT';
     v_sql := 'CREATE OR REPLACE TABLE ' || v_target_fq || ' AS
@@ -109,10 +107,8 @@ BEGIN
     v_phase := 'COUNT';
     SELECT COUNT(*) INTO :v_row_count FROM IDENTIFIER(:v_target_fq) WHERE PPN_ID = :v_ppn_id;
 
-    /* 5. STATE + LOG SUCCESS ------------------------------------------- */
+    /* 5. LOG SUCCESS (state is owned by SP_RUN_TABLE_LOAD) -------------- */
     v_phase := 'LOG_SUCCESS';
-    CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'SUCCESS', 'LOAD_SHARE_TO_BRONZE',
-                                  :v_row_count, NULL, NULL, NULL, NULL, NULL, TRUE);
     CALL ADM.SP_LOG_STEP(
         P_PPN_ID      => :v_ppn_id,
         P_PHASE       => 'LOAD_SHARE_TO_BRONZE',
@@ -145,8 +141,6 @@ EXCEPTION
     WHEN OTHER THEN
         LET v_final_msg STRING := COALESCE(v_error_msg, SQLERRM);
         BEGIN
-            CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', :v_phase,
-                                          NULL, NULL, NULL, NULL, NULL, :v_final_msg, TRUE);
             CALL ADM.SP_LOG_STEP(
                 P_PPN_ID      => :v_ppn_id,
                 P_PHASE       => 'LOAD_SHARE_TO_BRONZE',

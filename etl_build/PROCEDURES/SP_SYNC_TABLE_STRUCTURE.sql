@@ -43,7 +43,7 @@ BEGIN
     /* source must exist */
     v_phase := 'CHECK_SOURCE';
     SELECT COUNT(*) INTO :v_src_cnt
-      FROM DEV_DB.INFORMATION_SCHEMA.TABLES
+      FROM INFORMATION_SCHEMA.TABLES
      WHERE TABLE_SCHEMA = :v_src_sch AND TABLE_NAME = :v_table;
     IF (v_src_cnt = 0) THEN
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_SYNC_TABLE_STRUCTURE',
@@ -53,7 +53,7 @@ BEGIN
     /* target missing -> create LIKE source */
     v_phase := 'CHECK_TARGET';
     SELECT COUNT(*) INTO :v_tgt_cnt
-      FROM DEV_DB.INFORMATION_SCHEMA.TABLES
+      FROM INFORMATION_SCHEMA.TABLES
      WHERE TABLE_SCHEMA = :v_tgt_sch AND TABLE_NAME = :v_table;
 
     IF (v_tgt_cnt = 0) THEN
@@ -67,8 +67,8 @@ BEGIN
     v_phase := 'CHECK_TYPES';
     SELECT LISTAGG(s.COLUMN_NAME || ' (' || t.DATA_TYPE || ' -> ' || s.DATA_TYPE || ')', ', ')
       INTO :v_bad
-      FROM DEV_DB.INFORMATION_SCHEMA.COLUMNS s
-      JOIN DEV_DB.INFORMATION_SCHEMA.COLUMNS t
+      FROM INFORMATION_SCHEMA.COLUMNS s
+      JOIN INFORMATION_SCHEMA.COLUMNS t
         ON t.TABLE_SCHEMA = :v_tgt_sch AND t.TABLE_NAME = :v_table AND t.COLUMN_NAME = s.COLUMN_NAME
      WHERE s.TABLE_SCHEMA = :v_src_sch AND s.TABLE_NAME = :v_table
        AND s.DATA_TYPE <> t.DATA_TYPE
@@ -91,10 +91,10 @@ BEGIN
                ELSE s.DATA_TYPE
              END, ', ') WITHIN GROUP (ORDER BY s.ORDINAL_POSITION)
       INTO :v_add
-      FROM DEV_DB.INFORMATION_SCHEMA.COLUMNS s
+      FROM INFORMATION_SCHEMA.COLUMNS s
      WHERE s.TABLE_SCHEMA = :v_src_sch AND s.TABLE_NAME = :v_table
        AND (:P_EXCLUDE_CSV IS NULL OR NOT ARRAY_CONTAINS(s.COLUMN_NAME::VARIANT, SPLIT(UPPER(:P_EXCLUDE_CSV), ',')))
-       AND NOT EXISTS (SELECT 1 FROM DEV_DB.INFORMATION_SCHEMA.COLUMNS t
+       AND NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS t
                         WHERE t.TABLE_SCHEMA = :v_tgt_sch AND t.TABLE_NAME = :v_table AND t.COLUMN_NAME = s.COLUMN_NAME);
 
     IF (v_add IS NOT NULL AND v_add <> '') THEN

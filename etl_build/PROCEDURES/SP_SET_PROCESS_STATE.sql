@@ -2,7 +2,9 @@
 -- (one per PPN_ID x SOURCE_ID x TABLE_NAME). PPN_PROCESS is authoritative for
 -- run-time state and drives the GOLD gate.
 -- Semantics: non-null args OVERWRITE; null args PRESERVE the existing value.
--- START_TS is stamped automatically on first insert; P_SET_END stamps END_TS.
+-- START_TS is stamped on first insert; P_SET_END stamps END_TS.
+-- A P_STATUS of 'RUNNING' marks a fresh (re)attempt: it clears ERROR_MSG, END_TS and the
+-- row-count fields and re-stamps START_TS, so a retry never shows stale error/end/counts.
 
 use role dev_sysadmin;
 use database dev_db;
@@ -34,15 +36,17 @@ BEGIN
     USING (SELECT :P_PPN_ID AS PPN_ID, :P_SOURCE_ID AS SOURCE_ID, :P_TABLE_NAME AS TABLE_NAME) s
        ON t.PPN_ID = s.PPN_ID AND t.SOURCE_ID = s.SOURCE_ID AND t.TABLE_NAME = s.TABLE_NAME
     WHEN MATCHED THEN UPDATE SET
-        STATUS          = COALESCE(:P_STATUS,          t.STATUS),
-        PHASE           = COALESCE(:P_PHASE,           t.PHASE),
-        ROWS_EXTRACTED  = COALESCE(:P_ROWS_EXTRACTED,  t.ROWS_EXTRACTED),
-        ROWS_INSERTED   = COALESCE(:P_ROWS_INSERTED,   t.ROWS_INSERTED),
-        ROWS_UPDATED    = COALESCE(:P_ROWS_UPDATED,    t.ROWS_UPDATED),
-        ROWS_DELETED    = COALESCE(:P_ROWS_DELETED,    t.ROWS_DELETED),
+        STATUS          = COALESCE(:P_STATUS, t.STATUS),
+        PHASE           = COALESCE(:P_PHASE,  t.PHASE),
+        -- a new RUNNING = fresh (re)attempt: reset the attempt fields + re-stamp START_TS
+        ROWS_EXTRACTED  = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_EXTRACTED, t.ROWS_EXTRACTED)),
+        ROWS_INSERTED   = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_INSERTED,  t.ROWS_INSERTED)),
+        ROWS_UPDATED    = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_UPDATED,   t.ROWS_UPDATED)),
+        ROWS_DELETED    = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_DELETED,   t.ROWS_DELETED)),
         WATERMARK_VALUE = COALESCE(:P_WATERMARK_VALUE, t.WATERMARK_VALUE),
-        ERROR_MSG       = COALESCE(:P_ERROR_MSG,       t.ERROR_MSG),
-        END_TS          = IFF(:P_SET_END, :v_now, t.END_TS)
+        ERROR_MSG       = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ERROR_MSG, t.ERROR_MSG)),
+        START_TS        = IFF(:P_STATUS = 'RUNNING', :v_now, t.START_TS),
+        END_TS          = IFF(:P_STATUS = 'RUNNING', NULL, IFF(:P_SET_END, :v_now, t.END_TS))
     WHEN NOT MATCHED THEN INSERT
         (PPN_ID, SOURCE_ID, TABLE_NAME, STATUS, PHASE,
          ROWS_EXTRACTED, ROWS_INSERTED, ROWS_UPDATED, ROWS_DELETED,

@@ -1,5 +1,8 @@
 -- ADM.PPN_PROCESS - authoritative run-time state, one row per run x table.
 -- Drives reruns and the GOLD gate (SP_GATE_CHECK reads it). Upserted by SP_SET_PROCESS_STATE.
+-- Also holds the FROZEN RUN PLAN: SP_PREPARE_RUN seeds one PENDING row per active table at
+-- run start, so a table that is never invoked stays PENDING and fails the gate (fail-closed).
+-- ADF iterates these rows (ordered by LOAD_ORDER) instead of re-reading live ETL_TABLES.
 -- Deploy order: create AFTER PPN (FK target).
 
 use role dev_sysadmin;
@@ -10,8 +13,9 @@ create or replace table adm.ppn_process (
     ppn_id          number(38,0)     not null comment 'FK -> ADM.PPN.PPN_ID.',
     source_id       varchar          not null comment 'Source identifier (logical FK -> ADM.ETL_SOURCES).',
     table_name      varchar          not null comment 'Table being processed.',
-    status          varchar          comment 'RUNNING | SUCCESS | SKIP | ERROR.',
+    status          varchar          comment 'PENDING | RUNNING | SUCCESS | SKIP | ERROR.',
     phase           varchar          comment 'Current/last phase reached.',
+    load_order      number(38,0)     comment 'Frozen from ETL_TABLES at run start; ADF iterates in this order.',
     rows_extracted  number(38,0)     comment 'Rows read from source into BRONZE.',
     rows_inserted   number(38,0)     comment 'Rows inserted downstream.',
     rows_updated    number(38,0)     comment 'Rows updated downstream.',

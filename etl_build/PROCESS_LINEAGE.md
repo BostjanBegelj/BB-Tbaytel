@@ -34,8 +34,10 @@ sequenceDiagram
     SF-->>ADF: PPN_ID + PPN_TIMESTAMP  (ADM.PPN = RUNNING)
     ADF->>SF: CALL SP_VALIDATE_CONFIG(PPN_ID)
     SF-->>ADF: OK / raises on invalid config
-    ADF->>SF: read active ETL_SOURCES + ETL_TABLES (Lookup)
-    SF-->>ADF: table list (ordered by LOAD_ORDER)
+    ADF->>SF: CALL SP_PREPARE_RUN(PPN_ID)
+    Note over SF: freezes the plan — seeds PPN_PROCESS<br/>with one PENDING row per active table
+    ADF->>SF: read the frozen plan (Lookup on PPN_PROCESS, ORDER BY LOAD_ORDER)
+    SF-->>ADF: table list for THIS PPN
 
     Note over ADF,SF: PER TABLE (ForEach, by LOAD_ORDER)
     opt SOURCE_TYPE = PARQUET
@@ -68,7 +70,8 @@ sequenceDiagram
 | 1 | ADF | Trigger pipeline; generate `RUN_ID` | — | — |
 | 2 | ADF → SF | `SP_CREATE_PPN(RUN_ID)` → returns `PPN_ID`, `PPN_TIMESTAMP` | — | `ADM.PPN` (RUNNING), `PPN_LOG` |
 | 3 | ADF → SF | `SP_VALIDATE_CONFIG(PPN_ID)` (pre-flight active config) | `ETL_SOURCES`,`ETL_TABLES` | `PPN_LOG` (raises on invalid) |
-| 4 | ADF | Lookup active config, order by `LOAD_ORDER` | `ETL_SOURCES`,`ETL_TABLES` | — |
+| 3b | ADF → SF | `SP_PREPARE_RUN(PPN_ID)` — **freeze the run plan**: seed one `PENDING` row per active table | `ETL_SOURCES`,`ETL_TABLES` | `PPN_PROCESS` (PENDING), `PPN_LOG` |
+| 4 | ADF | Lookup the **frozen plan** for this PPN, order by `LOAD_ORDER` | `PPN_PROCESS` | — |
 | — | | **Per table (ForEach):** | | |
 | 5a | ADF → SRC/Blob | *(PARQUET only)* Copy activity: extract source → Parquet in Blob | source | Blob |
 | 6 | ADF → SF | `SP_RUN_TABLE_LOAD(PPN_ID, SOURCE_ID, TABLE)` — wraps landing (file/share) → check-change → HIST → SILVER; SKIP if identical | config, `BRONZE`, `BRONZE_HIST` | `BRONZE`/`BRONZE_HIST`/`SILVER`, `PPN_PROCESS`, `PPN_LOG` |
@@ -101,10 +104,19 @@ status per table for its own alerting.)
 - **Skip-if-identical:** step 7 lets a table short-circuit — if this load equals the last
   `BRONZE_HIST` snapshot (count + `HASH_AGG`), HIST + SILVER are skipped and the table is marked
   `SKIP` (still counts as success at the gate).
-- **Fail-closed gate:** step 11 permits GOLD only if every table is `SUCCESS`/`SKIP` **and** DQ
-  passed; anything `ERROR`/unknown → no GOLD, run closes `ERROR`, one alert.
-- **State vs log:** `PPN_PROCESS` = authoritative per-run×table state (drives the gate and reruns);
-  `PPN_LOG` = append-only step forensics (ERROR block first). Every procedure writes both.
+- **Frozen run plan:** `SP_PREPARE_RUN` seeds every active table as `PENDING` at run start, so the
+  gate can see tables that were *never invoked* (they stay `PENDING`, which is not `SUCCESS`/`SKIP`
+  → gate FAIL). It also fixes what this PPN was meant to process, so config edits mid-run can't
+  change the plan — ADF iterates `PPN_PROCESS`, not live `ETL_TABLES`.
+- **Fail-closed gate:** step 8 permits GOLD only if every planned entry is `SUCCESS`/`SKIP` **and**
+  DQ passed; anything `ERROR`/`PENDING`/unknown → no GOLD, run closes `ERROR`, one alert.
+- **State vs log:** `PPN_PROCESS` = authoritative per-run×table state (drives the gate and reruns),
+  written **only by `SP_RUN_TABLE_LOAD`** (RUNNING → SKIP/ERROR/SUCCESS, counts rolled up), so a
+  partially-processed table can never look complete. `PPN_LOG` = append-only step forensics
+  (ERROR block first), written by every procedure.
+- **Atomic writes:** HIST (`DELETE`+`INSERT` per PPN) and SILVER (`MERGE`+soft-delete) each run in
+  one explicit transaction with rollback on failure — Snowflake procedures are not atomic by
+  default. Structure sync/DDL runs *before* the transaction opens.
 - **Error propagation:** loaders return an error object *and* set `ERROR` state; run-control procs
   re-raise so the ADF activity fails and alerting fires.
 - **Idempotency:** re-running the same `PPN_ID` never duplicates — HIST delete-then-insert per PPN,
@@ -114,7 +126,7 @@ status per table for its own alerting.)
 
 ## Build status (2026-07-17)
 
-**Built:** `SP_CREATE_PPN`, `SP_VALIDATE_CONFIG`, `SP_RUN_TABLE_LOAD` (wrapper),
+**Built:** `SP_CREATE_PPN`, `SP_VALIDATE_CONFIG`, `SP_PREPARE_RUN`, `SP_RUN_TABLE_LOAD` (wrapper),
 `SP_LOAD_FILE_TO_BRONZE`, `SP_LOAD_SHARE_TO_BRONZE`, `SP_CHECK_DATA_CHANGE`,
 `SP_LOAD_BRONZE_TO_HIST`, `SP_LOAD_BRONZE_TO_SILVER`, `SP_SYNC_TABLE_STRUCTURE`,
 `SP_GATE_CHECK`, `SP_FINALIZE_RUN`, `SP_REFRESH_GOLD` (**stub**), helpers `SP_LOG_STEP` /

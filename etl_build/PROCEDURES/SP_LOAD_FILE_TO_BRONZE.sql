@@ -5,8 +5,9 @@
 -- Single responsibility = land the file(s). Schema handling is Snowflake-native
 -- (INFER_SCHEMA + ENABLE_SCHEMA_EVOLUTION); "skip identical" is a separate proc (deferred).
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
--- Child pattern: on failure it logs + sets ERROR state and RETURNS an error object
--- (the orchestrator decides whether to raise), matching the reference framework.
+-- Child pattern: writes PPN_LOG only and RETURNS a status object. PPN_PROCESS state is owned
+-- solely by SP_RUN_TABLE_LOAD, so a partially-completed table can never look complete.
+-- (Called standalone it still loads + logs; it just won't set table state.)
 
 use role dev_sysadmin;
 use database dev_db;
@@ -99,9 +100,6 @@ BEGIN
 
     SELECT PPN_TIMESTAMP INTO :v_ppn_ts FROM ADM.PPN WHERE PPN_ID = :v_ppn_id;
 
-    /* mark state RUNNING */
-    CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'RUNNING', 'LOAD_FILE_TO_BRONZE');
-
     /* 3. FIND FILES ----------------------------------------------------- */
     v_phase := 'FIND_FILES';
     v_sql := 'LIST ' || v_stage || ' PATTERN = ''' || v_pattern_esc || '''';
@@ -168,10 +166,8 @@ BEGIN
     v_phase := 'COUNT';
     SELECT COUNT(*) INTO :v_row_count FROM IDENTIFIER(:v_target_fq) WHERE PPN_ID = :v_ppn_id;
 
-    /* 9. STATE + LOG SUCCESS ------------------------------------------- */
+    /* 9. LOG SUCCESS (state is owned by SP_RUN_TABLE_LOAD) -------------- */
     v_phase := 'LOG_SUCCESS';
-    CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'SUCCESS', 'LOAD_FILE_TO_BRONZE',
-                                  :v_row_count, NULL, NULL, NULL, NULL, NULL, TRUE);
     CALL ADM.SP_LOG_STEP(
         P_PPN_ID      => :v_ppn_id,
         P_PHASE       => 'LOAD_FILE_TO_BRONZE',
@@ -204,8 +200,6 @@ EXCEPTION
     WHEN OTHER THEN
         LET v_final_msg STRING := COALESCE(v_error_msg, SQLERRM);
         BEGIN
-            CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', :v_phase,
-                                          NULL, NULL, NULL, NULL, NULL, :v_final_msg, TRUE);
             CALL ADM.SP_LOG_STEP(
                 P_PPN_ID      => :v_ppn_id,
                 P_PHASE       => 'LOAD_FILE_TO_BRONZE',
