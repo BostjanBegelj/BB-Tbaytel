@@ -88,7 +88,7 @@ BEGIN
     END IF;
     IF (UPPER(COALESCE(GET(v_land, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
         CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', 'LANDING',
-                                      NULL, NULL, NULL, NULL, NULL,
+                                      NULL, NULL, NULL, NULL,
                                       COALESCE(GET(:v_land,'message')::STRING, 'landing failed'), TRUE) INTO :v_log_rows;
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','LANDING',
                                 'message', COALESCE(GET(v_land,'message')::STRING, 'landing failed'),
@@ -100,7 +100,7 @@ BEGIN
     CALL ADM.SP_CHECK_DATA_CHANGE(:v_ppn_id, :v_source_id, :v_table) INTO :v_check;
     IF (UPPER(COALESCE(GET(v_check, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
         CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', 'CHECK',
-                                      NULL, NULL, NULL, NULL, NULL,
+                                      NULL, NULL, NULL, NULL,
                                       COALESCE(GET(:v_check,'message')::STRING, 'check-data-change failed'), TRUE) INTO :v_log_rows;
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','CHECK',
                                 'message', COALESCE(GET(v_check,'message')::STRING, 'check-data-change failed'),
@@ -108,9 +108,10 @@ BEGIN
     END IF;
 
     IF (COALESCE(GET(v_check, 'is_identical')::BOOLEAN, FALSE)) THEN
-        -- identical to last snapshot: mark table SKIP (counts as OK at the gate), skip HIST + SILVER
+        -- identical to last snapshot: mark table SKIP (counts as OK at the gate), skip HIST + SILVER.
+        -- Landing DID happen, so keep its row count as ROWS_EXTRACTED for monitoring.
         CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'SKIP', 'CHECK_DATA_CHANGE',
-                                      NULL, NULL, NULL, NULL, NULL, NULL, TRUE) INTO :v_log_rows;
+                                      GET(:v_land,'rows_loaded')::NUMBER, NULL, NULL, NULL, NULL, TRUE) INTO :v_log_rows;
         RETURN OBJECT_CONSTRUCT('status','SUCCESS','action','SKIPPED_IDENTICAL','procedure','SP_RUN_TABLE_LOAD',
                                 'source_id',v_source_id,'table',v_table,'ppn_id',v_ppn_id,
                                 'landing_result',v_land,'check_result',v_check);
@@ -121,7 +122,7 @@ BEGIN
     CALL ADM.SP_LOAD_BRONZE_TO_HIST(:v_ppn_id, :v_source_id, :v_table) INTO :v_hist;
     IF (UPPER(COALESCE(GET(v_hist, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
         CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', 'HIST',
-                                      NULL, NULL, NULL, NULL, NULL,
+                                      NULL, NULL, NULL, NULL,
                                       COALESCE(GET(:v_hist,'message')::STRING, 'hist load failed'), TRUE) INTO :v_log_rows;
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','HIST',
                                 'message', COALESCE(GET(v_hist,'message')::STRING, 'hist load failed'),
@@ -133,7 +134,7 @@ BEGIN
     CALL ADM.SP_LOAD_BRONZE_TO_SILVER(:v_ppn_id, :v_source_id, :v_table) INTO :v_silver;
     IF (UPPER(COALESCE(GET(v_silver, 'status')::STRING, 'ERROR')) <> 'SUCCESS') THEN
         CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', 'SILVER',
-                                      NULL, NULL, NULL, NULL, NULL,
+                                      NULL, NULL, NULL, NULL,
                                       COALESCE(GET(:v_silver,'message')::STRING, 'silver load failed'), TRUE) INTO :v_log_rows;
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','SILVER',
                                 'message', COALESCE(GET(v_silver,'message')::STRING, 'silver load failed'),
@@ -143,10 +144,10 @@ BEGIN
     /* 6. FINAL STATE: table complete, with counts rolled up from the children */
     v_phase := 'COMPLETE';
     LET v_extracted NUMBER := GET(v_land,   'rows_loaded')::NUMBER;
-    LET v_inserted  NUMBER := GET(v_silver, 'rows_merged')::NUMBER;
+    LET v_merged    NUMBER := GET(v_silver, 'rows_merged')::NUMBER;        -- inserts + updates
     LET v_deleted   NUMBER := GET(v_silver, 'rows_soft_deleted')::NUMBER;
     CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'SUCCESS', 'TABLE_COMPLETE',
-                                  :v_extracted, :v_inserted, NULL, :v_deleted, NULL, NULL, TRUE) INTO :v_log_rows;
+                                  :v_extracted, :v_merged, :v_deleted, NULL, NULL, TRUE) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
         'status','SUCCESS','action','PROCESSED','procedure','SP_RUN_TABLE_LOAD',
@@ -160,7 +161,7 @@ EXCEPTION
         -- own (engine/config) failure: record ERROR state for the table so the gate blocks GOLD
         BEGIN
             CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', :v_phase,
-                                          NULL, NULL, NULL, NULL, NULL, :v_final_msg, TRUE) INTO :v_log_rows;
+                                          NULL, NULL, NULL, NULL, :v_final_msg, TRUE) INTO :v_log_rows;
             CALL ADM.SP_LOG_STEP(
                 P_PPN_ID => :v_ppn_id, P_PHASE => 'RUN_TABLE_LOAD', P_STATUS => 'ERROR',
                 P_SOURCE_ID => :v_source_id, P_TABLE_NAME => :v_table,

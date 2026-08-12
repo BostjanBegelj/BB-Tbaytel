@@ -114,8 +114,8 @@ BEGIN
           old rows deleted and the new ones missing. Procedures are NOT atomic
           by default in Snowflake, so the transaction is explicit.           */
     v_phase := 'APPEND_TXN';
+    BEGIN TRANSACTION;
     v_txn_open := TRUE;
-    EXECUTE IMMEDIATE 'BEGIN TRANSACTION';
 
     v_phase := 'DELETE_PPN';
     v_sql := 'DELETE FROM ' || v_hist_fq || ' WHERE PPN_ID = ' || v_ppn_id;
@@ -128,7 +128,7 @@ BEGIN
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
-    EXECUTE IMMEDIATE 'COMMIT';
+    COMMIT;
     v_txn_open := FALSE;
 
     /* 5. COUNT ---------------------------------------------------------- */
@@ -171,7 +171,8 @@ EXCEPTION
         -- undo a half-finished append so history is never left mid-write
         IF (v_txn_open) THEN
             BEGIN
-                EXECUTE IMMEDIATE 'ROLLBACK';
+                ROLLBACK;
+                v_txn_open := FALSE;
             EXCEPTION
                 WHEN OTHER THEN NULL;
             END;

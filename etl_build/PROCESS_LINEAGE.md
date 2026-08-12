@@ -106,8 +106,14 @@ status per table for its own alerting.)
   `SKIP` (still counts as success at the gate).
 - **Frozen run plan:** `SP_PREPARE_RUN` seeds every active table as `PENDING` at run start, so the
   gate can see tables that were *never invoked* (they stay `PENDING`, which is not `SUCCESS`/`SKIP`
-  → gate FAIL). It also fixes what this PPN was meant to process, so config edits mid-run can't
-  change the plan — ADF iterates `PPN_PROCESS`, not live `ETL_TABLES`.
+  → gate FAIL). **Scope of the freeze: table membership + `LOAD_ORDER`** — per-table execution
+  config (`SOURCE_TYPE`, `LOAD_TYPE`, `PK_COLUMNS`, stage/pattern, …) is still read live at
+  execution time. ADF iterates `PPN_PROCESS`, not live `ETL_TABLES`. Freeze-once: a repeat
+  `SP_PREPARE_RUN` call returns the existing plan unchanged and never appends newly-added tables.
+- **Only `SP_PREPARE_RUN` inserts `PPN_PROCESS` rows.** `SP_SET_PROCESS_STATE` is update-only and
+  raises if no planned row exists — so runtime cannot invent rows for a run that was never
+  prepared (which would let the gate pass while never-invoked tables stayed invisible), and an
+  unplanned table cannot be processed.
 - **Fail-closed gate:** step 8 permits GOLD only if every planned entry is `SUCCESS`/`SKIP` **and**
   DQ passed; anything `ERROR`/`PENDING`/unknown → no GOLD, run closes `ERROR`, one alert.
 - **State vs log:** `PPN_PROCESS` = authoritative per-run×table state (drives the gate and reruns),

@@ -54,7 +54,7 @@ SELECT PPN_ID, RUN_ID, STATUS, START_TS, END_TS FROM ADM.PPN WHERE PPN_ID = $PPN
 
 -- Per-table state: every planned row STATUS in (SUCCESS, SKIP) -> gate passes.
 -- Any row left PENDING means that table was never processed -> gate FAILs (by design).
-SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, LOAD_ORDER, ROWS_EXTRACTED, ROWS_INSERTED, ROWS_DELETED
+SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, LOAD_ORDER, ROWS_EXTRACTED, ROWS_MERGED, ROWS_DELETED
   FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN ORDER BY LOAD_ORDER;
 
 -- Fail-closed proof (optional): plan a run, process only SOME tables, then gate.

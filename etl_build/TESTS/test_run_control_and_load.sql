@@ -127,7 +127,7 @@ CALL ADM.SP_CHECK_DATA_CHANGE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_T
 -- =============================================================================
 CALL ADM.SP_RUN_TABLE_LOAD(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA',   P_TABLE_NAME => 'CUSTOMER');
 CALL ADM.SP_RUN_TABLE_LOAD(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
-SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, ROWS_INSERTED, ROWS_DELETED
+SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, ROWS_MERGED, ROWS_DELETED
   FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN_ID ORDER BY SOURCE_ID, TABLE_NAME;
 
 -- =============================================================================
@@ -137,19 +137,28 @@ SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, ROWS_INSERTED, ROWS
 CALL ADM.SP_LOAD_FILE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
 
 -- =============================================================================
--- TEST 5 — SP_SET_PROCESS_STATE  (helper, direct: upsert then verify)
+-- TEST 5 — SP_SET_PROCESS_STATE  (helper: UPDATE-only; planned rows only)
+--   It never inserts. An unplanned table must RAISE — that is what stops runtime from
+--   creating rows outside the frozen plan (which would let the gate pass on a partial run).
 -- =============================================================================
+-- 5a. negative: not in the frozen plan -> expect an error
 CALL ADM.SP_SET_PROCESS_STATE(
-    P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'MANUAL_TEST',
+    P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'NOT_PLANNED_TABLE',
+    P_STATUS => 'SUCCESS', P_PHASE => 'MANUAL');   -- expect: row does not exist / not in plan
+
+-- 5b. positive: a planned table updates fine
+CALL ADM.SP_SET_PROCESS_STATE(
+    P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'CUSTOMER',
     P_STATUS => 'SUCCESS', P_PHASE => 'MANUAL', P_ROWS_EXTRACTED => 42, P_SET_END => TRUE);
-SELECT * FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN_ID AND TABLE_NAME = 'MANUAL_TEST';
+SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED
+  FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN_ID AND TABLE_NAME = 'CUSTOMER';
 
 -- =============================================================================
 -- TEST 6 — SP_LOG_STEP  (helper, direct: write one log row then verify RUN_ID lookup)
 -- =============================================================================
 CALL ADM.SP_LOG_STEP(
     P_PPN_ID => $PPN_ID, P_PHASE => 'MANUAL', P_STATUS => 'SUCCESS',
-    P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'MANUAL_TEST',
+    P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'CUSTOMER',
     P_ROW_COUNT => 42, P_MESSAGE => 'manual log-step test');
 SELECT PPN_ID, RUN_ID, PHASE, STATUS, MESSAGE FROM ADM.PPN_LOG
  WHERE PPN_ID = $PPN_ID AND PHASE = 'MANUAL' ORDER BY LOG_ID DESC LIMIT 1;   -- RUN_ID auto-filled

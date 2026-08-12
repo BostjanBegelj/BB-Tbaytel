@@ -118,7 +118,10 @@ BEGIN
     END IF;
 
     -- NULL-safe + delimiter-safe: JSON-serialize the column array before hashing.
-    -- NULL stays JSON null (distinct from ''); the array removes delimiter ambiguity.
+    -- SQL NULL renders as `undefined` inside the array (NOT JSON null) - what matters is that
+    -- it stays DISTINCT from an empty string; the array removes delimiter ambiguity.
+    -- NOTE: intended for relational types. Do NOT reuse as-is for OBJECT/VARIANT values -
+    -- JSON key order is not a stability contract, so those need canonicalising first.
     v_row_hk := 'MD5(TO_JSON(ARRAY_CONSTRUCT(' || v_cols || ')))';
 
     IF (v_pk_columns IS NOT NULL AND TRIM(v_pk_columns) <> '') THEN
@@ -176,8 +179,8 @@ BEGIN
           upserts applied but deletions unflagged. Procedures are NOT atomic by
           default in Snowflake, so the transaction is explicit.              */
     v_phase := 'SILVER_TXN';
+    BEGIN TRANSACTION;
     v_txn_open := TRUE;
-    EXECUTE IMMEDIATE 'BEGIN TRANSACTION';
 
     v_phase := 'MERGE';
     v_sql := 'MERGE INTO ' || v_silver_fq || ' tgt USING (' || v_src_select || ') src ON tgt.PK_HK = src.PK_HK ' ||
@@ -206,7 +209,7 @@ BEGIN
         v_deleted := SQLROWCOUNT;
     END IF;
 
-    EXECUTE IMMEDIATE 'COMMIT';
+    COMMIT;
     v_txn_open := FALSE;
 
     /* 7. LOG SUCCESS (state is owned by SP_RUN_TABLE_LOAD) -------------- */
@@ -247,7 +250,8 @@ EXCEPTION
         -- undo a half-applied SILVER change (merge without its delete sweep)
         IF (v_txn_open) THEN
             BEGIN
-                EXECUTE IMMEDIATE 'ROLLBACK';
+                ROLLBACK;
+                v_txn_open := FALSE;
             EXCEPTION
                 WHEN OTHER THEN NULL;
             END;

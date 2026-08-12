@@ -3,6 +3,9 @@
 -- Also holds the FROZEN RUN PLAN: SP_PREPARE_RUN seeds one PENDING row per active table at
 -- run start, so a table that is never invoked stays PENDING and fails the gate (fail-closed).
 -- ADF iterates these rows (ordered by LOAD_ORDER) instead of re-reading live ETL_TABLES.
+-- SP_PREPARE_RUN is the ONLY procedure that inserts here; SP_SET_PROCESS_STATE only updates.
+-- Scope of the freeze: table MEMBERSHIP + LOAD_ORDER. Per-table execution config
+-- (SOURCE_TYPE, LOAD_TYPE, PK_COLUMNS, stage/pattern, ...) is still read live from ETL_*.
 -- Deploy order: create AFTER PPN (FK target).
 
 use role dev_sysadmin;
@@ -17,9 +20,8 @@ create or replace table adm.ppn_process (
     phase           varchar          comment 'Current/last phase reached.',
     load_order      number(38,0)     comment 'Frozen from ETL_TABLES at run start; ADF iterates in this order.',
     rows_extracted  number(38,0)     comment 'Rows read from source into BRONZE.',
-    rows_inserted   number(38,0)     comment 'Rows inserted downstream.',
-    rows_updated    number(38,0)     comment 'Rows updated downstream.',
-    rows_deleted    number(38,0)     comment 'Rows soft/hard deleted downstream.',
+    rows_merged     number(38,0)     comment 'Rows affected by the SILVER MERGE (inserts + updates; not split).',
+    rows_deleted    number(38,0)     comment 'Rows soft-deleted in SILVER.',
     watermark_value varchar          comment 'Last incremental high-water mark (stored as text).',
     error_msg       varchar          comment 'Root-cause error message on failure.',
     start_ts        timestamp_ntz(9) comment 'Processing start timestamp.',
