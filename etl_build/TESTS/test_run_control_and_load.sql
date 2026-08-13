@@ -137,16 +137,8 @@ SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, ROWS_MERGED, ROWS_D
 CALL ADM.SP_LOAD_FILE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
 
 -- =============================================================================
--- TEST 5 — SP_SET_PROCESS_STATE  (helper: UPDATE-only; planned rows only)
---   It never inserts. An unplanned table must RAISE — that is what stops runtime from
---   creating rows outside the frozen plan (which would let the gate pass on a partial run).
+-- TEST 5 — SP_SET_PROCESS_STATE  (helper: upsert — creates the row on first touch)
 -- =============================================================================
--- 5a. negative: not in the frozen plan -> expect an error
-CALL ADM.SP_SET_PROCESS_STATE(
-    P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'NOT_PLANNED_TABLE',
-    P_STATUS => 'SUCCESS', P_PHASE => 'MANUAL');   -- expect: row does not exist / not in plan
-
--- 5b. positive: a planned table updates fine
 CALL ADM.SP_SET_PROCESS_STATE(
     P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_TABLE_NAME => 'CUSTOMER',
     P_STATUS => 'SUCCESS', P_PHASE => 'MANUAL', P_ROWS_EXTRACTED => 42, P_SET_END => TRUE);

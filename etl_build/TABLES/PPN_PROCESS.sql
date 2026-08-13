@@ -1,11 +1,10 @@
 -- ADM.PPN_PROCESS - authoritative run-time state, one row per run x table.
 -- Drives reruns and the GOLD gate (SP_GATE_CHECK reads it). Upserted by SP_SET_PROCESS_STATE.
--- Also holds the FROZEN RUN PLAN: SP_PREPARE_RUN seeds one PENDING row per active table at
--- run start, so a table that is never invoked stays PENDING and fails the gate (fail-closed).
--- ADF iterates these rows (ordered by LOAD_ORDER) instead of re-reading live ETL_TABLES.
--- SP_PREPARE_RUN is the ONLY procedure that inserts here; SP_SET_PROCESS_STATE only updates.
--- Scope of the freeze: table MEMBERSHIP + LOAD_ORDER. Per-table execution config
--- (SOURCE_TYPE, LOAD_TYPE, PK_COLUMNS, stage/pattern, ...) is still read live from ETL_*.
+-- Rows are created on first touch by the table load itself (via SP_SET_PROCESS_STATE), so this
+-- table records WHAT ACTUALLY RAN in a given PPN. The set of tables in a run is decided by the
+-- schedule/orchestrator and may legitimately be a SUBSET of ETL_TABLES.
+-- NOTE: consequently a table the orchestrator never invoked leaves no row here at all - a
+-- completeness/gate check cannot be based on this table alone (see the GOLD gate decision).
 -- Deploy order: create AFTER PPN (FK target).
 
 use role dev_sysadmin;
@@ -16,9 +15,8 @@ create or replace table adm.ppn_process (
     ppn_id          number(38,0)     not null comment 'FK -> ADM.PPN.PPN_ID.',
     source_id       varchar          not null comment 'Source identifier (logical FK -> ADM.ETL_SOURCES).',
     table_name      varchar          not null comment 'Table being processed.',
-    status          varchar          comment 'PENDING | RUNNING | SUCCESS | SKIP | ERROR.',
+    status          varchar          comment 'RUNNING | SUCCESS | SKIP | ERROR.',
     phase           varchar          comment 'Current/last phase reached.',
-    load_order      number(38,0)     comment 'Frozen from ETL_TABLES at run start; ADF iterates in this order.',
     rows_extracted  number(38,0)     comment 'Rows read from source into BRONZE.',
     rows_merged     number(38,0)     comment 'Rows affected by the SILVER MERGE (inserts + updates; not split).',
     rows_deleted    number(38,0)     comment 'Rows soft-deleted in SILVER.',

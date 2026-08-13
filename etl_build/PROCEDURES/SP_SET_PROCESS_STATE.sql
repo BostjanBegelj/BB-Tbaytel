@@ -2,12 +2,15 @@
 -- PPN_ID x SOURCE_ID x TABLE_NAME. PPN_PROCESS is authoritative run-time state and drives
 -- the GOLD gate.
 --
--- INVARIANT: this procedure NEVER inserts. SP_PREPARE_RUN is the sole creator of
--- PPN_PROCESS rows (the frozen run plan). If no planned row exists this RAISES, which:
---   * catches a run where SP_PREPARE_RUN was never called (otherwise runtime would create
---     rows for the tables it happened to process and the gate would PASS while never-invoked
---     tables stayed invisible - the exact hole the frozen plan exists to close);
---   * blocks processing a table that is not part of this PPN's plan.
+-- Creates the row on first touch (the calling table load "claims" itself) and updates it
+-- thereafter. There is no pre-seeded run plan: the set of tables processed in a run is decided
+-- by the schedule/orchestrator and can legitimately be a SUBSET of ETL_TABLES, so PPN_PROCESS
+-- records what actually ran.
+--
+-- CONSEQUENCE (accepted, revisit with the GOLD gate decision): because rows only exist for
+-- tables that were invoked, a table the orchestrator never called leaves NO trace here. Any
+-- future completeness check therefore cannot rely on PPN_PROCESS alone - it needs the run's
+-- intended table list from somewhere (a frozen plan, or the schedule).
 --
 -- Semantics: non-null args OVERWRITE; null args PRESERVE the existing value.
 -- P_STATUS='RUNNING' marks a fresh (re)attempt: clears ERROR_MSG, END_TS and the row-count
@@ -33,36 +36,34 @@ CREATE OR REPLACE PROCEDURE ADM.SP_SET_PROCESS_STATE(
 )
 RETURNS NUMBER(38,0)
 LANGUAGE SQL
-COMMENT = 'Helper: UPDATE ADM.PPN_PROCESS (never inserts). Raises if the table is not in the frozen run plan.'
+COMMENT = 'Helper: upsert ADM.PPN_PROCESS for one run x table. Non-null args overwrite; nulls preserve.'
 EXECUTE AS CALLER
 AS
 DECLARE
-    e_not_planned EXCEPTION (-20230,
-        'PPN_PROCESS row does not exist: the run was not prepared (SP_PREPARE_RUN) or this table is not part of the frozen plan.');
-
-    v_now  TIMESTAMP_NTZ(9) DEFAULT CURRENT_TIMESTAMP();
-    v_rows NUMBER DEFAULT 0;
+    v_now TIMESTAMP_NTZ(9) DEFAULT CURRENT_TIMESTAMP();
 BEGIN
-    UPDATE ADM.PPN_PROCESS
-       SET STATUS          = COALESCE(:P_STATUS, STATUS),
-           PHASE           = COALESCE(:P_PHASE,  PHASE),
-           -- a new RUNNING = fresh (re)attempt: reset the attempt fields + re-stamp START_TS
-           ROWS_EXTRACTED  = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_EXTRACTED, ROWS_EXTRACTED)),
-           ROWS_MERGED     = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_MERGED,    ROWS_MERGED)),
-           ROWS_DELETED    = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_DELETED,   ROWS_DELETED)),
-           WATERMARK_VALUE = COALESCE(:P_WATERMARK_VALUE, WATERMARK_VALUE),
-           ERROR_MSG       = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ERROR_MSG, ERROR_MSG)),
-           START_TS        = IFF(:P_STATUS = 'RUNNING', :v_now, START_TS),
-           END_TS          = IFF(:P_STATUS = 'RUNNING', NULL, IFF(:P_SET_END, :v_now, END_TS))
-     WHERE PPN_ID = :P_PPN_ID
-       AND SOURCE_ID = :P_SOURCE_ID
-       AND TABLE_NAME = :P_TABLE_NAME;
+    MERGE INTO ADM.PPN_PROCESS t
+    USING (SELECT :P_PPN_ID AS PPN_ID, :P_SOURCE_ID AS SOURCE_ID, :P_TABLE_NAME AS TABLE_NAME) s
+       ON t.PPN_ID = s.PPN_ID AND t.SOURCE_ID = s.SOURCE_ID AND t.TABLE_NAME = s.TABLE_NAME
+    WHEN MATCHED THEN UPDATE SET
+        STATUS          = COALESCE(:P_STATUS, t.STATUS),
+        PHASE           = COALESCE(:P_PHASE,  t.PHASE),
+        -- a new RUNNING = fresh (re)attempt: reset the attempt fields + re-stamp START_TS
+        ROWS_EXTRACTED  = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_EXTRACTED, t.ROWS_EXTRACTED)),
+        ROWS_MERGED     = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_MERGED,    t.ROWS_MERGED)),
+        ROWS_DELETED    = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_DELETED,   t.ROWS_DELETED)),
+        WATERMARK_VALUE = COALESCE(:P_WATERMARK_VALUE, t.WATERMARK_VALUE),
+        ERROR_MSG       = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ERROR_MSG, t.ERROR_MSG)),
+        START_TS        = IFF(:P_STATUS = 'RUNNING', :v_now, t.START_TS),
+        END_TS          = IFF(:P_STATUS = 'RUNNING', NULL, IFF(:P_SET_END, :v_now, t.END_TS))
+    WHEN NOT MATCHED THEN INSERT
+        (PPN_ID, SOURCE_ID, TABLE_NAME, STATUS, PHASE,
+         ROWS_EXTRACTED, ROWS_MERGED, ROWS_DELETED,
+         WATERMARK_VALUE, ERROR_MSG, START_TS, END_TS)
+        VALUES
+        (:P_PPN_ID, :P_SOURCE_ID, :P_TABLE_NAME, :P_STATUS, :P_PHASE,
+         :P_ROWS_EXTRACTED, :P_ROWS_MERGED, :P_ROWS_DELETED,
+         :P_WATERMARK_VALUE, :P_ERROR_MSG, :v_now, IFF(:P_SET_END, :v_now, NULL));
 
-    v_rows := SQLROWCOUNT;   -- capture immediately after the DML
-
-    IF (v_rows <> 1) THEN
-        RAISE e_not_planned;
-    END IF;
-
-    RETURN v_rows;
+    RETURN SQLROWCOUNT;   -- captured immediately after the DML
 END;
