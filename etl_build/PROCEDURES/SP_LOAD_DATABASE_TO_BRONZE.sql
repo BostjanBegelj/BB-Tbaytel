@@ -53,6 +53,7 @@ DECLARE
     v_ppn_ts      TIMESTAMP_NTZ(9);
 
     v_cfg_count   NUMBER  DEFAULT 0;
+    v_ppn_count   NUMBER  DEFAULT 0;
     v_row_count   NUMBER  DEFAULT 0;
     v_started_at  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
     v_phase       STRING  DEFAULT 'INIT';
@@ -96,10 +97,35 @@ BEGIN
         RAISE e_failed;
     END IF;
 
+    -- SOURCE_DB / SOURCE_OBJECT are interpolated into dynamic SQL, so validate their shape the
+    -- same way the wrapper validates the table name: plain identifiers, dot-separated.
+    v_phase := 'VALIDATE_SOURCE_NAMES';
+    IF (NOT REGEXP_LIKE(UPPER(v_source_db), '^[A-Z_][A-Z0-9_$]*$')) THEN
+        v_error_msg := 'Invalid SOURCE_DB [' || v_source_db || '] - must be a plain identifier.';
+        RAISE e_failed;
+    END IF;
+    IF (NOT REGEXP_LIKE(UPPER(v_source_obj), '^[A-Z_][A-Z0-9_$]*(\\.[A-Z_][A-Z0-9_$]*)*$')) THEN
+        v_error_msg := 'Invalid SOURCE_OBJECT [' || v_source_obj || '] - expected SCHEMA.TABLE of plain identifiers.';
+        RAISE e_failed;
+    END IF;
+
     v_src_fq    := v_source_db || '.' || v_source_obj;                       -- e.g. SHARE_SIM_DB.WHOLESALE.PARTNER_ACCOUNT
     v_target_fq := '"' || v_db || '"."' || v_target_sch || '"."' || v_table || '"';
 
-    SELECT PPN_TIMESTAMP INTO :v_ppn_ts FROM ADM.PPN WHERE PPN_ID = :v_ppn_id;
+    /* PPN context - guard explicitly: a missing PPN would otherwise leave v_ppn_ts NULL, make the
+       whole concatenated CTAS string NULL, and fail with a baffling message. */
+    v_phase := 'GET_PPN';
+    SELECT COUNT(*), MAX(PPN_TIMESTAMP)
+      INTO :v_ppn_count, :v_ppn_ts
+      FROM ADM.PPN WHERE PPN_ID = :v_ppn_id;
+    IF (v_ppn_count <> 1 OR v_ppn_ts IS NULL) THEN
+        v_error_msg := 'PPN_ID [' || TO_VARCHAR(v_ppn_id) || '] not found in ADM.PPN (call SP_CREATE_PPN first).';
+        RAISE e_failed;
+    END IF;
+
+    /* NOTE (accepted risk): the CTAS below adds PPN_ID / PPN_TIMESTAMP next to s.*, so a source
+       column with one of those names would raise a duplicate-column error. Not pre-checked -
+       the probability is negligible and it would cost a metadata query on every load. */
 
     /* 2b. WATERMARK LOWER BOUND (LOAD_TYPE = WATERMARK only) -------------
           Read the high value reached by the most recent successful run for this table.

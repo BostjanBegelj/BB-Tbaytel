@@ -22,14 +22,15 @@ insert into adm.etl_sources (source_id, source_name, source_type, stage_name, so
 --   USAGE_DAILY             : WATERMARK on EVENT_TS (TIMESTAMP), 2-day overlap. For a FILE source
 --                             the filter is ADVISORY - ADF decides which rows to extract; Snowflake
 --                             records the MAX EVENT_TS landed so ADF can read it back.
---   STAGE_SUBPATH is left NULL here so the existing manually-uploaded test files keep working
---   (the loader then reads the source root and relies on FILE_PATTERN alone).
---   PRODUCTION CONTRACT once ADF writes PPN-scoped folders - set it per table, e.g.
---     update adm.etl_tables set stage_subpath = 'CUSTOMER/{PPN_ID}/'
---      where source_id = 'BSS_ORA' and table_name = 'CUSTOMER';
---   ADF must then write that run's files to
---     @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/CUSTOMER/<PPN_ID>/...
---   so each run only ever sees its own input (immutable, reproducible, no stale files).
+--   PATH CONTRACT (confirmed with the ADF team): <stage>/{source}/{table}/{ppn_id}/
+--   STAGE_NAME already ends with the source folder, so leaving STAGE_SUBPATH NULL makes the
+--   loader read  @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/CUSTOMER/<PPN_ID>/  automatically.
+--   That is the production setting - no per-table path config required.
+--
+--   For MANUAL testing, creating a folder named after each new PPN_ID is impractical, so point
+--   the test tables at a fixed per-table folder instead:
+--     update adm.etl_tables set stage_subpath = table_name || '/' where source_id = 'BSS_ORA';
+--   (drop that override to test the real PPN-scoped path).
 insert into adm.etl_tables
     (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns,
      watermark_column, watermark_type, watermark_overlap, target_schema, load_order) values
@@ -91,12 +92,13 @@ insert into adm.etl_tables
 --       repeats and ROW_HK means unchanged rows do not even update.
 --
 -- STAGE_SUBPATH (FILE sources) ----------------------------------------------------------------
---   NULL                     read <STAGE_NAME> and rely on FILE_PATTERN alone. Simple, but the
---                            pattern also matches files left over from earlier extractions.
---   'CUSTOMER/{PPN_ID}/'     read only this run's folder - the recommended production contract.
---                            {PPN_ID} is substituted at run time.
---   'CUSTOMER/'              a fixed per-table folder (no PPN isolation, but at least separates
---                            tables that share one stage root).
+--   NULL                     PRODUCTION DEFAULT. Follows the agreed ADF contract
+--                            <stage>/{source}/{table}/{ppn_id}/ - STAGE_NAME already ends with the
+--                            source folder, so the loader appends <TABLE>/<PPN_ID>/ itself.
+--   'CUSTOMER/{PPN_ID}/'     the same thing spelled out; only needed if a source deviates from
+--                            the convention. {PPN_ID} is substituted at run time.
+--   'CUSTOMER/'              TEST override: fixed per-table folder so manually uploaded files can
+--                            be reused across runs (no folder per PPN_ID). Not for production.
 --
 -- Other flags ---------------------------------------------------------------------------------
 --   allow_empty: permit a legitimately empty FULL/INIT snapshot (otherwise the empty-guard errors)

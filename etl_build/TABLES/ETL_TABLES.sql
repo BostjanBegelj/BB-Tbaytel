@@ -25,7 +25,7 @@ create or replace table adm.etl_tables (
     table_name       varchar      not null comment 'Logical/target table name (e.g. CUSTOMER).',
     source_object    varchar      comment 'DATABASE: <schema>.<table> inside SOURCE_DB.',
     file_pattern     varchar      comment 'FILE: regex matching the file(s) for one load, e.g. .*CUSTOMER_.*\\.parquet.',
-    stage_subpath    varchar      comment 'FILE: path appended to ETL_SOURCES.STAGE_NAME to scope ONE load, e.g. CUSTOMER/{PPN_ID}/. The {PPN_ID} token is replaced with the current PPN_ID, so a run only ever sees its own files (immutable input, reproducible retries, no stale files from earlier extractions). NULL = read the source root and rely on FILE_PATTERN alone. This is the path contract for the ADF side.',
+    stage_subpath    varchar      comment 'FILE: OVERRIDE for the stage path appended to ETL_SOURCES.STAGE_NAME. Leave NULL in production: the loader then follows the agreed ADF contract <stage>/{source}/{table}/{ppn_id}/ automatically (STAGE_NAME already ends with the source folder). Set it only when a source deviates, or for manual testing where a folder per PPN_ID is impractical (e.g. CUSTOMER/). {PPN_ID} is substituted at run time.',
     load_type        varchar      not null comment 'FULL | INIT | INCR | PARTITION | WATERMARK.',
     pk_columns       varchar      comment 'Comma-separated business PK columns (required for INCR and WATERMARK).',
     watermark_column varchar      comment 'Source column holding the high-water mark (e.g. MODIFIED_TS). Required for LOAD_TYPE WATERMARK. DATABASE sources filter on it; for FILE sources it is advisory (ADF owns extraction) but the reached MAX is still recorded in PPN_PROCESS.WATERMARK_VALUE.',

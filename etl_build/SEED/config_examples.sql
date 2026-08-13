@@ -60,72 +60,74 @@ insert into adm.etl_sources (source_id, source_name, source_type, source_db) val
 -- 2. FILE-SOURCE TABLES
 -- =============================================================================================
 
--- 2a. FULL snapshot, no PPN isolation (what the DEV test files use).
---     The pattern also matches files left from earlier extractions - fine for manual testing,
---     NOT recommended once ADF is driving.
+-- 2a. FULL snapshot, DEFAULT path  <-- STANDARD PRODUCTION ROW
+--     STAGE_SUBPATH NULL => the loader follows the agreed ADF contract automatically:
+--       @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/CUSTOMER/<PPN_ID>/
+--     Each run reads only its own folder, so stale files from earlier extractions are impossible.
 insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns, load_order) values
-  ('BSS_ORA', 'CUSTOMER', '.*CUSTOMER_.*\\.parquet', 'FULL', 'CUSTOMER_ID', 10);
+  ('BSS_ORA', 'CUSTOMER', '.*\\.parquet', 'FULL', 'CUSTOMER_ID', 10);
 
--- 2b. FULL snapshot, PPN-scoped folder  <-- RECOMMENDED PRODUCTION PATTERN
---     ADF writes to  @.../BSS_ORA/CUSTOMER/<PPN_ID>/  and this run reads only that folder.
+-- 2b. Same, with the path spelled out explicitly. Identical behaviour to 2a - only needed if a
+--     source deviates from the convention (e.g. an extra sub-folder level).
 insert into adm.etl_tables (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns, load_order) values
   ('BSS_ORA', 'CUSTOMER', '.*\\.parquet', 'CUSTOMER/{PPN_ID}/', 'FULL', 'CUSTOMER_ID', 10);
 
--- 2c. FULL snapshot, fixed per-table folder (no PPN isolation, but tables don't share a folder).
+-- 2c. OVERRIDE for manual testing: a fixed per-table folder, no PPN level, so uploaded files can
+--     be reused across runs. NOT for production - the pattern can then match older files.
 insert into adm.etl_tables (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns, load_order) values
   ('BSS_ORA', 'CUSTOMER', '.*CUSTOMER_.*\\.parquet', 'CUSTOMER/', 'FULL', 'CUSTOMER_ID', 10);
 
 -- 2d. INIT - one-off seed of a brand-new table. Behaves like FULL; switch the row to
 --     INCR/WATERMARK afterwards.
-insert into adm.etl_tables (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns, load_order) values
-  ('BSS_ORA', 'CUSTOMER_HISTORY', '.*\\.parquet', 'CUSTOMER_HISTORY/{PPN_ID}/', 'INIT', 'CUSTOMER_ID', 15);
+insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns, load_order) values
+  ('BSS_ORA', 'CUSTOMER_HISTORY', '.*\\.parquet', 'INIT', 'CUSTOMER_ID', 15);
 
 -- 2e. INCR - ADF sends a delta and keeps its own bookmark. Nothing is recorded on our side.
-insert into adm.etl_tables (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns, load_order) values
-  ('BSS_ORA', 'USAGE_DAILY', '.*\\.parquet', 'USAGE_DAILY/{PPN_ID}/', 'INCR', 'USAGE_ID', 30);
+insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns, load_order) values
+  ('BSS_ORA', 'USAGE_DAILY', '.*\\.parquet', 'INCR', 'USAGE_ID', 30);
 
 -- 2f. WATERMARK + TIMESTAMP, 2-day overlap. The filter is ADVISORY for FILE sources (ADF does the
 --     extraction) but the MAX EVENT_TS landed is recorded in PPN_PROCESS.WATERMARK_VALUE, so ADF
 --     can read it back as its next lower bound. Catches inserts AND updates.
-insert into adm.etl_tables (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns,
+insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns,
                             watermark_column, watermark_type, watermark_overlap, load_order) values
-  ('BSS_ORA', 'USAGE_DAILY', '.*\\.parquet', 'USAGE_DAILY/{PPN_ID}/', 'WATERMARK', 'USAGE_ID',
+  ('BSS_ORA', 'USAGE_DAILY', '.*\\.parquet', 'WATERMARK', 'USAGE_ID',
    'EVENT_TS', 'TIMESTAMP', 2, 30);
 
 -- 2g. WATERMARK + DATE, 7-day overlap (day-grain source column).
-insert into adm.etl_tables (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns,
+insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns,
                             watermark_column, watermark_type, watermark_overlap, load_order) values
-  ('BSS_ORA', 'INVOICE', '.*\\.parquet', 'INVOICE/{PPN_ID}/', 'WATERMARK', 'INVOICE_ID',
+  ('BSS_ORA', 'INVOICE', '.*\\.parquet', 'WATERMARK', 'INVOICE_ID',
    'INVOICE_DATE', 'DATE', 7, 40);
 
 -- 2h. WATERMARK + NUMBER, 100-unit overlap.
 --     WARNING: an id does not change when a row is UPDATED, so this detects INSERTS ONLY.
 --     Use it for append-only feeds; use TIMESTAMP if rows can be modified.
-insert into adm.etl_tables (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns,
+insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns,
                             watermark_column, watermark_type, watermark_overlap, load_order) values
-  ('BSS_ORA', 'CALL_EVENT', '.*\\.parquet', 'CALL_EVENT/{PPN_ID}/', 'WATERMARK', 'EVENT_ID',
+  ('BSS_ORA', 'CALL_EVENT', '.*\\.parquet', 'WATERMARK', 'EVENT_ID',
    'EVENT_ID', 'NUMBER', 100, 50);
 
 -- 2i. PARTITION - replace only the partitions present in this load; the SILVER delete sweep is
 --     scoped to those partitions, so other dates are untouched. Requires PARTITION_COLUMN.
-insert into adm.etl_tables (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns,
+insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns,
                             partition_column, load_order) values
-  ('BSS_ORA', 'USAGE_DAILY', '.*\\.parquet', 'USAGE_DAILY/{PPN_ID}/', 'PARTITION', 'USAGE_ID',
+  ('BSS_ORA', 'USAGE_DAILY', '.*\\.parquet', 'PARTITION', 'USAGE_ID',
    'USAGE_DATE', 30);
 
 -- 2j. FULL snapshot for a table that may LEGITIMATELY be empty. Without ALLOW_EMPTY the
 --     empty-snapshot guard errors the table (a 0-row FULL load would soft-delete all of SILVER).
-insert into adm.etl_tables (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns,
+insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns,
                             allow_empty, load_order) values
-  ('BSS_ORA', 'PROMO_CAMPAIGN', '.*\\.parquet', 'PROMO_CAMPAIGN/{PPN_ID}/', 'FULL', 'CAMPAIGN_ID',
+  ('BSS_ORA', 'PROMO_CAMPAIGN', '.*\\.parquet', 'FULL', 'CAMPAIGN_ID',
    TRUE, 60);
 
 -- 2k. Table with NO business key. PK_HK falls back to the whole row, so identical rows dedupe and
 --     a changed row looks like delete+insert. Allowed for FULL/INIT only (INCR/WATERMARK require
 --     PK_COLUMNS). Land it in RAW rather than BRONZE, as an example of TARGET_SCHEMA.
-insert into adm.etl_tables (source_id, table_name, file_pattern, stage_subpath, load_type,
+insert into adm.etl_tables (source_id, table_name, file_pattern, load_type,
                             target_schema, load_order) values
-  ('BSS_ORA', 'RATE_PLAN_DUMP', '.*\\.parquet', 'RATE_PLAN_DUMP/{PPN_ID}/', 'FULL',
+  ('BSS_ORA', 'RATE_PLAN_DUMP', '.*\\.parquet', 'FULL',
    'RAW', 70);
 
 
@@ -149,12 +151,15 @@ insert into adm.etl_tables (source_id, table_name, source_object, load_type, pk_
   ('WHOLESALE', 'WHOLESALE_USAGE', 'WHOLESALE.WHOLESALE_USAGE', 'WATERMARK', 'USAGE_ID',
    'MODIFIED_TS', 'TIMESTAMP', 1, 20);
 
--- 3d. WATERMARK + DATE, no overlap.
---     Loader appends:  WHERE s."USAGE_DATE" > DATEADD(day, 0, '<last>'::DATE)
+-- 3d. WATERMARK + DATE, minimum 1-day overlap.
+--     Loader appends:  WHERE s."USAGE_DATE" > DATEADD(day, -1, '<last>'::DATE)
+--     DATE compares at DAY grain with ">", so OVERLAP 0 would permanently skip every row dated
+--     exactly on the bound (rows added later the same day are lost). SP_VALIDATE_CONFIG therefore
+--     REJECTS WATERMARK_TYPE='DATE' with WATERMARK_OVERLAP < 1.
 insert into adm.etl_tables (source_id, table_name, source_object, load_type, pk_columns,
                             watermark_column, watermark_type, watermark_overlap, load_order) values
   ('WHOLESALE', 'WHOLESALE_USAGE', 'WHOLESALE.WHOLESALE_USAGE', 'WATERMARK', 'USAGE_ID',
-   'USAGE_DATE', 'DATE', 0, 20);
+   'USAGE_DATE', 'DATE', 1, 20);
 
 -- 3e. WATERMARK + NUMBER, 50-unit overlap (append-only ledger).
 --     Loader appends:  WHERE s."USAGE_ID" > (<last> - 50)
@@ -190,6 +195,11 @@ insert into adm.etl_tables (source_id, table_name, source_object, load_type, pk_
 --  LOAD_TYPE WATERMARK without WATERMARK_TYPE, or WATERMARK_TYPE not in (TIMESTAMP, DATE, NUMBER)
 --  LOAD_TYPE PARTITION without PARTITION_COLUMN
 --  WATERMARK_OVERLAP < 0
+--  WATERMARK_TYPE 'DATE' with WATERMARK_OVERLAP < 1 (day-grain ">" would skip same-day rows)
+--
+-- NOT checked (accepted risk): a source column named PPN_ID / PPN_TIMESTAMP / SRC_FILE_NAME would
+-- collide with the lineage columns the loaders add. Considered negligible; if it ever happens,
+-- rename the column in the extract.
 --  a table whose SOURCE_ID has no active ETL_SOURCES row
 
 
@@ -202,9 +212,11 @@ insert into adm.etl_tables (source_id, table_name, source_object, load_type, pk_
 --   update adm.etl_tables set load_type='WATERMARK', watermark_column='MODIFIED_TS',
 --          watermark_type='TIMESTAMP', watermark_overlap=1
 --    where source_id='WHOLESALE' and table_name='WHOLESALE_USAGE';
--- adopt PPN-scoped folders for a table once ADF writes them
---   update adm.etl_tables set stage_subpath='CUSTOMER/{PPN_ID}/', file_pattern='.*\\.parquet'
+-- switch a table from a TEST override back to the production default path
+--   update adm.etl_tables set stage_subpath = null, file_pattern = '.*\\.parquet'
 --    where source_id='BSS_ORA' and table_name='CUSTOMER';
+-- point ALL of a source's tables at fixed per-table folders for manual testing
+--   update adm.etl_tables set stage_subpath = table_name || '/' where source_id='BSS_ORA';
 -- force a full reload of a WATERMARK table (clears the recorded bound, so the next run reads all)
 --   update adm.ppn_process set watermark_value = null
 --    where source_id='WHOLESALE' and table_name='WHOLESALE_USAGE';

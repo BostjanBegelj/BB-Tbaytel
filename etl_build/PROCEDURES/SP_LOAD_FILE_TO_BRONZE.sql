@@ -51,6 +51,7 @@ DECLARE
     v_ppn_ts      TIMESTAMP_NTZ(9);
 
     v_cfg_count   NUMBER  DEFAULT 0;
+    v_ppn_count   NUMBER  DEFAULT 0;
     v_row_count   NUMBER  DEFAULT 0;
     v_started_at  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
     v_phase       STRING  DEFAULT 'INIT';
@@ -93,19 +94,38 @@ BEGIN
         RAISE e_failed;
     END IF;
 
-    -- Resolve the location this load reads from. STAGE_SUBPATH scopes the read to one run's own
-    -- folder (e.g. 'CUSTOMER/{PPN_ID}/'), so files from earlier extractions can never be picked
-    -- up: without it, a static FILE_PATTERN also matches yesterday's file, which would duplicate
-    -- keys in a FULL snapshot, make SILVER's dedupe pick an arbitrary version, and hide deletes.
-    -- Note COPY's usual "skip already-loaded files" protection does NOT help here, because
-    -- step 4 recreates the table and a new table has empty load history.
-    v_location    := v_stage || COALESCE(REPLACE(v_subpath, '{PPN_ID}', TO_VARCHAR(v_ppn_id)), '');
+    -- Resolve the location this load reads from.
+    --
+    -- AGREED PATH CONTRACT WITH ADF:  <stage>/{source}/{table}/{ppn_id}/
+    -- STAGE_NAME already ends with the source folder, so the default appends <TABLE>/<PPN_ID>/ -
+    -- no per-table path config is needed in production.
+    --
+    -- Why it must be PPN-scoped: with a shared folder a static FILE_PATTERN also matches files
+    -- from earlier extractions, which would duplicate keys inside one "snapshot", make SILVER's
+    -- dedupe pick an arbitrary version, and hide deletes. COPY's usual "skip already-loaded
+    -- files" protection does NOT help, because step 4 recreates the table and a new table has
+    -- empty load history.
+    --
+    -- STAGE_SUBPATH overrides the convention when a source does not follow it (and for manual
+    -- testing, where creating a folder per PPN_ID is impractical - a fixed 'TABLE/' is used).
+    v_location := v_stage ||
+                  COALESCE(REPLACE(v_subpath, '{PPN_ID}', TO_VARCHAR(v_ppn_id)),
+                           v_table || '/' || TO_VARCHAR(v_ppn_id) || '/');
     -- stage root = the stage object without any path prefix (for INFER_SCHEMA FILES).
     v_stage_root  := SPLIT_PART(v_stage, '/', 1) || '/';
     v_pattern_esc := REPLACE(v_pattern, '\\', '\\\\');
     v_target_fq   := '"' || v_db || '"."' || v_target_sch || '"."' || v_table || '"';
 
-    SELECT PPN_TIMESTAMP INTO :v_ppn_ts FROM ADM.PPN WHERE PPN_ID = :v_ppn_id;
+    /* PPN context - guard explicitly: a missing PPN would otherwise leave v_ppn_ts NULL and make
+       the concatenated STAMP_PPN statement NULL, failing with a baffling message. */
+    v_phase := 'GET_PPN';
+    SELECT COUNT(*), MAX(PPN_TIMESTAMP)
+      INTO :v_ppn_count, :v_ppn_ts
+      FROM ADM.PPN WHERE PPN_ID = :v_ppn_id;
+    IF (v_ppn_count <> 1 OR v_ppn_ts IS NULL) THEN
+        v_error_msg := 'PPN_ID [' || TO_VARCHAR(v_ppn_id) || '] not found in ADM.PPN (call SP_CREATE_PPN first).';
+        RAISE e_failed;
+    END IF;
 
     /* 3. FIND FILES ----------------------------------------------------- */
     v_phase := 'FIND_FILES';
@@ -147,7 +167,11 @@ BEGIN
           SRC_FILE_NAME is OUR column; it is populated from Snowflake's staged-file
           pseudo-column METADATA$FILENAME by the COPY below (INCLUDE_METADATA maps
           target_column = pseudo_column). That metadata is format-agnostic - it works
-          for CSV/JSON/Avro/Parquet alike - so this is not Parquet-specific.        */
+          for CSV/JSON/Avro/Parquet alike - so this is not Parquet-specific.
+          NOTE (accepted risk): if the source files themselves contained a column named
+          PPN_ID / PPN_TIMESTAMP / SRC_FILE_NAME, ADD COLUMN IF NOT EXISTS would skip it, COPY
+          would fill it with the source value and STAMP_PPN would not stamp those rows. Not
+          pre-checked - the probability is negligible.                                       */
     v_phase := 'ADD_METADATA';
     v_sql := 'ALTER TABLE ' || v_target_fq || ' ADD COLUMN IF NOT EXISTS ' ||
              'SRC_FILE_NAME STRING, PPN_ID NUMBER(38,0), PPN_TIMESTAMP TIMESTAMP_NTZ(9)';

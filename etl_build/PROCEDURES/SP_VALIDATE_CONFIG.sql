@@ -84,6 +84,15 @@ BEGIN
           FROM ADM.ETL_TABLES
          WHERE active_flag AND COALESCE(watermark_overlap, 0) < 0
         UNION ALL
+        -- A DATE watermark compares at DAY grain with ">", so OVERLAP 0 permanently skips every
+        -- row dated exactly on the recorded bound (rows added later the same day are lost, and
+        -- tomorrow's bound is higher still). DATE watermarks need at least a 1-day lookback.
+        SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] WATERMARK_TYPE DATE requires '
+               || 'WATERMARK_OVERLAP >= 1 (with 0 the same-day rows on the bound are never loaded)'
+          FROM ADM.ETL_TABLES
+         WHERE active_flag AND UPPER(load_type) = 'WATERMARK'
+           AND UPPER(watermark_type) = 'DATE' AND COALESCE(watermark_overlap, 0) < 1
+        UNION ALL
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] LOAD_TYPE PARTITION requires PARTITION_COLUMN'
           FROM ADM.ETL_TABLES
          WHERE active_flag AND UPPER(load_type) = 'PARTITION' AND (partition_column IS NULL OR TRIM(partition_column) = '')
