@@ -34,6 +34,8 @@ DECLARE
 
     v_stage       STRING;
     v_stage_root  STRING;
+    v_subpath     STRING;
+    v_location    STRING;                  -- resolved stage path this load reads from
     v_format      STRING;
     v_pattern     STRING;
     v_pattern_esc STRING;
@@ -71,8 +73,9 @@ BEGIN
     v_phase := 'READ_CONFIG';
     SELECT COUNT(*), MAX(s.stage_name), MAX(s.file_format), MAX(t.file_pattern),
            MAX(UPPER(COALESCE(t.target_schema, 'BRONZE'))), MAX(t.watermark_column),
-           MAX(UPPER(t.watermark_type))
-      INTO :v_cfg_count, :v_stage, :v_format, :v_pattern, :v_target_sch, :v_wm_col, :v_wm_type
+           MAX(UPPER(t.watermark_type)), MAX(t.stage_subpath)
+      INTO :v_cfg_count, :v_stage, :v_format, :v_pattern, :v_target_sch, :v_wm_col, :v_wm_type,
+           :v_subpath
       FROM ADM.ETL_TABLES t
       JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
      WHERE t.source_id = :v_source_id
@@ -90,6 +93,13 @@ BEGIN
         RAISE e_failed;
     END IF;
 
+    -- Resolve the location this load reads from. STAGE_SUBPATH scopes the read to one run's own
+    -- folder (e.g. 'CUSTOMER/{PPN_ID}/'), so files from earlier extractions can never be picked
+    -- up: without it, a static FILE_PATTERN also matches yesterday's file, which would duplicate
+    -- keys in a FULL snapshot, make SILVER's dedupe pick an arbitrary version, and hide deletes.
+    -- Note COPY's usual "skip already-loaded files" protection does NOT help here, because
+    -- step 4 recreates the table and a new table has empty load history.
+    v_location    := v_stage || COALESCE(REPLACE(v_subpath, '{PPN_ID}', TO_VARCHAR(v_ppn_id)), '');
     -- stage root = the stage object without any path prefix (for INFER_SCHEMA FILES).
     v_stage_root  := SPLIT_PART(v_stage, '/', 1) || '/';
     v_pattern_esc := REPLACE(v_pattern, '\\', '\\\\');
@@ -99,7 +109,7 @@ BEGIN
 
     /* 3. FIND FILES ----------------------------------------------------- */
     v_phase := 'FIND_FILES';
-    v_sql := 'LIST ' || v_stage || ' PATTERN = ''' || v_pattern_esc || '''';
+    v_sql := 'LIST ' || v_location || ' PATTERN = ''' || v_pattern_esc || '''';
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
@@ -111,7 +121,7 @@ BEGIN
       FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
 
     IF (v_file_list IS NULL OR v_file_list = '') THEN
-        v_error_msg := 'No files in ' || v_stage || ' matching pattern [' || v_pattern || '].';
+        v_error_msg := 'No files in ' || v_location || ' matching pattern [' || v_pattern || '].';
         RAISE e_failed;
     END IF;
 
@@ -126,8 +136,10 @@ BEGIN
                      LOCATION    => ''' || v_stage_root || ''',
                      FILES       => (' || v_file_list || '),
                      FILE_FORMAT => ''' || v_format || ''',
-                     IGNORE_CASE => TRUE)))
-        ENABLE_SCHEMA_EVOLUTION = TRUE';
+                     IGNORE_CASE => TRUE)))';
+    -- No ENABLE_SCHEMA_EVOLUTION: the table is rebuilt from the files every run, so the schema
+    -- is always current by construction and there is nothing for evolution to evolve from.
+    -- Drift into the PERSISTENT layers is handled by SP_SYNC_TABLE_STRUCTURE (HIST / SILVER).
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
@@ -145,7 +157,7 @@ BEGIN
     /* 6. COPY ----------------------------------------------------------- */
     v_phase := 'COPY';
     v_sql := 'COPY INTO ' || v_target_fq || '
-        FROM ' || v_stage || '
+        FROM ' || v_location || '
         PATTERN = ''' || v_pattern_esc || '''
         FILE_FORMAT = (FORMAT_NAME = ' || v_format || ')
         MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
@@ -154,7 +166,11 @@ BEGIN
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
-    /* 7. STAMP PPN ------------------------------------------------------ */
+    /* 7. STAMP PPN ------------------------------------------------------
+          "WHERE PPN_ID IS NULL" is safe ONLY because step 4 recreated the table, so every row
+          present is from this load. If BRONZE ever becomes append-style (multiple PPNs in one
+          table), this predicate would also stamp older unstamped rows - stamp during the COPY
+          or filter on SRC_FILE_NAME instead.                                                 */
     v_phase := 'STAMP_PPN';
     v_sql := 'UPDATE ' || v_target_fq || '
         SET PPN_ID = ' || v_ppn_id || ',
@@ -195,13 +211,14 @@ BEGIN
         P_TABLE_NAME  => :v_table,
         P_LOG_START   => :v_started_at,
         P_LOG_END     => CURRENT_TIMESTAMP(),
-        P_SOURCE_OBJECT => :v_stage,
+        P_SOURCE_OBJECT => :v_location,
         P_TARGET_OBJECT => :v_target_fq,
         P_ROW_COUNT   => :v_row_count,
         P_MESSAGE     => 'SUCCESS: loaded ' || :v_row_count || ' row(s) into ' || :v_target_sch || '.' || :v_table || '.',
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_FILE_TO_BRONZE','ppn_id',:v_ppn_id),
-            'results', OBJECT_CONSTRUCT('files', :v_file_list, 'rows_loaded', :v_row_count,
+            'results', OBJECT_CONSTRUCT('location', :v_location, 'pattern', :v_pattern,
+                                        'files', :v_file_list, 'rows_loaded', :v_row_count,
                                         'watermark_column', :v_wm_col, 'watermark_type', :v_wm_type,
                                         'watermark_to', :v_wm_new)
         )

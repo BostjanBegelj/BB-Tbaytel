@@ -22,12 +22,20 @@ insert into adm.etl_sources (source_id, source_name, source_type, stage_name, so
 --   USAGE_DAILY             : WATERMARK on EVENT_TS (TIMESTAMP), 2-day overlap. For a FILE source
 --                             the filter is ADVISORY - ADF decides which rows to extract; Snowflake
 --                             records the MAX EVENT_TS landed so ADF can read it back.
+--   STAGE_SUBPATH is left NULL here so the existing manually-uploaded test files keep working
+--   (the loader then reads the source root and relies on FILE_PATTERN alone).
+--   PRODUCTION CONTRACT once ADF writes PPN-scoped folders - set it per table, e.g.
+--     update adm.etl_tables set stage_subpath = 'CUSTOMER/{PPN_ID}/'
+--      where source_id = 'BSS_ORA' and table_name = 'CUSTOMER';
+--   ADF must then write that run's files to
+--     @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/CUSTOMER/<PPN_ID>/...
+--   so each run only ever sees its own input (immutable, reproducible, no stale files).
 insert into adm.etl_tables
-    (source_id, table_name, file_pattern, load_type, pk_columns,
+    (source_id, table_name, file_pattern, stage_subpath, load_type, pk_columns,
      watermark_column, watermark_type, watermark_overlap, target_schema, load_order) values
-  ('BSS_ORA','CUSTOMER',     '.*CUSTOMER_.*\\.parquet',     'FULL',      'CUSTOMER_ID', null,       null,       0, 'BRONZE', 10),
-  ('BSS_ORA','SERVICE_PLAN', '.*SERVICE_PLAN_.*\\.parquet', 'FULL',      'PLAN_ID',     null,       null,       0, 'BRONZE', 20),
-  ('BSS_ORA','USAGE_DAILY',  '.*USAGE_DAILY_.*\\.parquet',  'WATERMARK', 'USAGE_ID',    'EVENT_TS', 'TIMESTAMP', 2, 'BRONZE', 30);
+  ('BSS_ORA','CUSTOMER',     '.*CUSTOMER_.*\\.parquet',     null, 'FULL',      'CUSTOMER_ID', null,       null,       0, 'BRONZE', 10),
+  ('BSS_ORA','SERVICE_PLAN', '.*SERVICE_PLAN_.*\\.parquet', null, 'FULL',      'PLAN_ID',     null,       null,       0, 'BRONZE', 20),
+  ('BSS_ORA','USAGE_DAILY',  '.*USAGE_DAILY_.*\\.parquet',  null, 'WATERMARK', 'USAGE_ID',    'EVENT_TS', 'TIMESTAMP', 2, 'BRONZE', 30);
 
 -- Tables: WHOLESALE (DATABASE / data share)
 --   PARTNER_ACCOUNT : FULL snapshot of a small dimension.
@@ -41,9 +49,10 @@ insert into adm.etl_tables
   ('WHOLESALE','WHOLESALE_USAGE','WHOLESALE.WHOLESALE_USAGE','WATERMARK', 'USAGE_ID',  'MODIFIED_TS','TIMESTAMP', 1, 'BRONZE', 20);
 
 -- =============================================================================================
--- ONE EXAMPLE PER VARIANT (reference; not inserted). Column order:
---   source_id, table_name, <file_pattern|source_object>, load_type, pk_columns,
---   watermark_column, watermark_type, watermark_overlap, partition_column, target_schema, load_order
+-- A runnable example of EVERY valid source/load/watermark/subpath combination lives in
+--   etl_build/SEED/config_examples.sql
+-- (including the invalid combinations SP_VALIDATE_CONFIG rejects, and maintenance statements).
+-- The quick summary below is kept for convenience.
 -- =============================================================================================
 -- LOAD_TYPE variants -------------------------------------------------------------------------
 --  FULL      complete snapshot; MERGE + soft-delete missing keys. Deletes ARE detected.
@@ -81,6 +90,14 @@ insert into adm.etl_tables
 --   1-N re-read that far back each run to catch late arrivals; the SILVER MERGE absorbs the
 --       repeats and ROW_HK means unchanged rows do not even update.
 --
+-- STAGE_SUBPATH (FILE sources) ----------------------------------------------------------------
+--   NULL                     read <STAGE_NAME> and rely on FILE_PATTERN alone. Simple, but the
+--                            pattern also matches files left over from earlier extractions.
+--   'CUSTOMER/{PPN_ID}/'     read only this run's folder - the recommended production contract.
+--                            {PPN_ID} is substituted at run time.
+--   'CUSTOMER/'              a fixed per-table folder (no PPN isolation, but at least separates
+--                            tables that share one stage root).
+--
 -- Other flags ---------------------------------------------------------------------------------
 --   allow_empty: permit a legitimately empty FULL/INIT snapshot (otherwise the empty-guard errors)
 --     update adm.etl_tables set allow_empty = true where source_id='BSS_ORA' and table_name='SERVICE_PLAN';
@@ -90,7 +107,7 @@ insert into adm.etl_tables
 
 -- Verify
 select * from adm.etl_sources order by source_id;
-select source_id, table_name, load_type, pk_columns,
+select source_id, table_name, load_type, pk_columns, stage_subpath,
        watermark_column, watermark_type, watermark_overlap,
        partition_column, target_schema, load_order, allow_empty
   from adm.etl_tables order by source_id, load_order;
