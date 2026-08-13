@@ -12,8 +12,9 @@
 -- complete, even if a child procedure mishandles its own reporting.
 --
 -- Failure isolation: on a child failure this STOPS the table and returns an ERROR object
--- WITHOUT raising - so one bad table doesn't abort the run; the run-level SP_GATE_CHECK
--- (fail-closed) blocks GOLD because the table's state is ERROR.
+-- WITHOUT raising - so one bad table doesn't abort the orchestrator's loop over the others.
+-- The failure is recorded on the table's PPN_PROCESS row and in PPN_LOG; the caller inspects
+-- the returned status (and any future pre-GOLD check reads PPN_PROCESS).
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP (not a parameter here).
 
 use role dev_sysadmin;
@@ -152,10 +153,11 @@ BEGIN
     END IF;
 
     IF (COALESCE(GET(v_check, 'is_identical')::BOOLEAN, FALSE)) THEN
-        -- identical to last snapshot: mark table SKIP (counts as OK at the gate), skip HIST + SILVER.
+        -- Identical to the last snapshot: nothing to add downstream, so HIST + SILVER are skipped.
+        -- SKIP is a successful outcome (the table is already up to date), not a failure.
         -- Landing DID happen, so keep its row count as ROWS_EXTRACTED for monitoring.
         CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'SKIP', 'CHECK_DATA_CHANGE',
-                                      GET(:v_land,'rows_loaded')::NUMBER, NULL, NULL, NULL, NULL, TRUE) INTO :v_log_rows;
+                                      :v_landed, NULL, NULL, NULL, NULL, TRUE) INTO :v_log_rows;
         RETURN OBJECT_CONSTRUCT('status','SUCCESS','action','SKIPPED_IDENTICAL','procedure','SP_RUN_TABLE_LOAD',
                                 'source_id',v_source_id,'table',v_table,'ppn_id',v_ppn_id,
                                 'landing_result',v_land,'check_result',v_check);
@@ -187,11 +189,10 @@ BEGIN
 
     /* 6. FINAL STATE: table complete, with counts rolled up from the children */
     v_phase := 'COMPLETE';
-    LET v_extracted NUMBER := GET(v_land,   'rows_loaded')::NUMBER;
-    LET v_merged    NUMBER := GET(v_silver, 'rows_merged')::NUMBER;        -- inserts + updates
-    LET v_deleted   NUMBER := GET(v_silver, 'rows_soft_deleted')::NUMBER;
+    LET v_merged  NUMBER := GET(v_silver, 'rows_merged')::NUMBER;          -- inserts + updates
+    LET v_deleted NUMBER := GET(v_silver, 'rows_soft_deleted')::NUMBER;
     CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'SUCCESS', 'TABLE_COMPLETE',
-                                  :v_extracted, :v_merged, :v_deleted, NULL, NULL, TRUE) INTO :v_log_rows;
+                                  :v_landed, :v_merged, :v_deleted, NULL, NULL, TRUE) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
         'status','SUCCESS','action','PROCESSED','procedure','SP_RUN_TABLE_LOAD',
@@ -202,7 +203,8 @@ BEGIN
 EXCEPTION
     WHEN OTHER THEN
         LET v_final_msg STRING := COALESCE(v_error_msg, SQLERRM);
-        -- own (engine/config) failure: record ERROR state for the table so the gate blocks GOLD
+        -- Own (engine/config) failure, i.e. not a child returning ERROR: record the failure on
+        -- the table's PPN_PROCESS row and log it, since no child logged this one.
         BEGIN
             CALL ADM.SP_SET_PROCESS_STATE(:v_ppn_id, :v_source_id, :v_table, 'ERROR', :v_phase,
                                           NULL, NULL, NULL, NULL, :v_final_msg, TRUE) INTO :v_log_rows;

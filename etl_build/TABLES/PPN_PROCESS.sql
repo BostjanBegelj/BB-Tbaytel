@@ -1,10 +1,18 @@
 -- ADM.PPN_PROCESS - authoritative run-time state, one row per run x table.
--- Drives reruns and the GOLD gate (SP_GATE_CHECK reads it). Upserted by SP_SET_PROCESS_STATE.
--- Rows are created on first touch by the table load itself (via SP_SET_PROCESS_STATE), so this
--- table records WHAT ACTUALLY RAN in a given PPN. The set of tables in a run is decided by the
--- schedule/orchestrator and may legitimately be a SUBSET of ETL_TABLES.
--- NOTE: consequently a table the orchestrator never invoked leaves no row here at all - a
--- completeness/gate check cannot be based on this table alone (see the GOLD gate decision).
+-- Written ONLY by SP_RUN_TABLE_LOAD (via the SP_SET_PROCESS_STATE helper), which creates the row
+-- on first touch and owns its lifecycle: RUNNING -> SUCCESS | SKIP | ERROR.
+-- It therefore records WHAT ACTUALLY RAN in a given PPN. The set of tables in a run is decided by
+-- the schedule/orchestrator and may legitimately be a SUBSET of ETL_TABLES.
+--
+-- Current consumers: per-table status/counts for monitoring and troubleshooting, and rerun
+-- decisions (a table left RUNNING or ERROR is the one to re-drive).
+--
+-- POSSIBLE FUTURE USE - pre-GOLD gate (decision still open, see SP_GATE_CHECK, not wired in):
+-- a run-level check could require every row for the PPN to be SUCCESS or SKIP before refreshing
+-- GOLD, and could read a DQ verdict recorded here as a run-level row. IMPORTANT PRECONDITION:
+-- a table the orchestrator never invoked leaves NO row here, so completeness cannot be proven
+-- from this table alone - such a check also needs the run's INTENDED table list (from the
+-- schedule, or from a plan frozen at run start).
 -- Deploy order: create AFTER PPN (FK target).
 
 use role dev_sysadmin;
