@@ -41,7 +41,7 @@ BEGIN
 
     /* 1. GATE ----------------------------------------------------------- */
     v_phase := 'GATE';
-    CALL ADM.SP_GATE_CHECK(:v_ppn) INTO :v_gate;
+    CALL ADM.SP_GATE_CHECK(P_PPN_ID => :v_ppn) INTO :v_gate;
     v_gate_verdict := UPPER(COALESCE(GET(v_gate, 'gate')::STRING, 'FAIL'));
     v_reason       := COALESCE(GET(v_gate, 'reason')::STRING, '');
 
@@ -61,7 +61,7 @@ BEGIN
     /* 2. GOLD (only if gate passed) ------------------------------------- */
     IF (v_gate_verdict = 'PASS') THEN
         v_phase := 'GOLD';
-        CALL ADM.SP_REFRESH_GOLD(:v_ppn) INTO :v_gold;
+        CALL ADM.SP_REFRESH_GOLD(P_PPN_ID => :v_ppn) INTO :v_gold;
         IF (UPPER(COALESCE(GET(v_gold, 'status')::STRING, 'ERROR')) = 'SUCCESS') THEN
             v_run_status := 'SUCCESS';
             v_reason     := 'Gate passed; GOLD refreshed.';
@@ -76,7 +76,8 @@ BEGIN
 
     /* 3. CLOSE (once, with the derived status) -------------------------- */
     v_phase := 'CLOSE';
-    CALL ADM.SP_CLOSE_PPN(:v_ppn, :v_run_status, :v_reason) INTO :v_close;
+    CALL ADM.SP_CLOSE_PPN(
+        P_PPN_ID => :v_ppn, P_STATUS => :v_run_status, P_MESSAGE => :v_reason) INTO :v_close;
 
     IF (v_run_status = 'ERROR') THEN
         v_error_msg := v_reason;   -- marks this as a controlled failure (run already closed ERROR)
@@ -99,7 +100,9 @@ EXCEPTION
         -- Genuine unexpected engine error (v_error_msg NULL) may have left the run un-closed -> close it.
         IF (v_error_msg IS NULL) THEN
             BEGIN
-                CALL ADM.SP_CLOSE_PPN(:v_ppn, 'ERROR', 'SP_FINALIZE_RUN failed: ' || :v_final) INTO :v_close;
+                CALL ADM.SP_CLOSE_PPN(
+                    P_PPN_ID => :v_ppn, P_STATUS => 'ERROR',
+                    P_MESSAGE => 'SP_FINALIZE_RUN failed: ' || :v_final) INTO :v_close;
             EXCEPTION
                 WHEN OTHER THEN NULL;
             END;

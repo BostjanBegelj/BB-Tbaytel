@@ -18,16 +18,87 @@ insert into adm.etl_sources (source_id, source_name, source_type, stage_name, so
   ('WHOLESALE', 'Partner wholesale (Data Share)', 'DATABASE', null,                                   'SHARE_SIM_DB', null);
 
 -- Tables: BSS_ORA (FILE / Parquet)
-insert into adm.etl_tables (source_id, table_name, file_pattern, load_type, pk_columns, watermark_column, target_schema, load_order) values
-  ('BSS_ORA','CUSTOMER',     '.*CUSTOMER_.*\\.parquet',     'FULL', 'CUSTOMER_ID', null,      'BRONZE', 10),
-  ('BSS_ORA','SERVICE_PLAN', '.*SERVICE_PLAN_.*\\.parquet', 'FULL', 'PLAN_ID',     null,      'BRONZE', 20),
-  ('BSS_ORA','USAGE_DAILY',  '.*USAGE_DAILY_.*\\.parquet',  'INCR', 'USAGE_ID',    'EVENT_TS', 'BRONZE', 30);
+--   CUSTOMER / SERVICE_PLAN : FULL snapshots -> SILVER soft-deletes keys missing from the snapshot.
+--   USAGE_DAILY             : WATERMARK on EVENT_TS (TIMESTAMP), 2-day overlap. For a FILE source
+--                             the filter is ADVISORY - ADF decides which rows to extract; Snowflake
+--                             records the MAX EVENT_TS landed so ADF can read it back.
+insert into adm.etl_tables
+    (source_id, table_name, file_pattern, load_type, pk_columns,
+     watermark_column, watermark_type, watermark_overlap, target_schema, load_order) values
+  ('BSS_ORA','CUSTOMER',     '.*CUSTOMER_.*\\.parquet',     'FULL',      'CUSTOMER_ID', null,       null,       0, 'BRONZE', 10),
+  ('BSS_ORA','SERVICE_PLAN', '.*SERVICE_PLAN_.*\\.parquet', 'FULL',      'PLAN_ID',     null,       null,       0, 'BRONZE', 20),
+  ('BSS_ORA','USAGE_DAILY',  '.*USAGE_DAILY_.*\\.parquet',  'WATERMARK', 'USAGE_ID',    'EVENT_TS', 'TIMESTAMP', 2, 'BRONZE', 30);
 
 -- Tables: WHOLESALE (DATABASE / data share)
-insert into adm.etl_tables (source_id, table_name, source_object, load_type, pk_columns, watermark_column, target_schema, load_order) values
-  ('WHOLESALE','PARTNER_ACCOUNT','WHOLESALE.PARTNER_ACCOUNT','FULL','ACCOUNT_ID','MODIFIED_TS','BRONZE',10),
-  ('WHOLESALE','WHOLESALE_USAGE','WHOLESALE.WHOLESALE_USAGE','INCR','USAGE_ID',  'MODIFIED_TS','BRONZE',20);
+--   PARTNER_ACCOUNT : FULL snapshot of a small dimension.
+--   WHOLESALE_USAGE : WATERMARK on MODIFIED_TS (TIMESTAMP), 1-day overlap. For a DATABASE source
+--                     this is ENFORCED - the loader appends
+--                        WHERE MODIFIED_TS > DATEADD(day, -1, '<last recorded>'::TIMESTAMP_NTZ)
+insert into adm.etl_tables
+    (source_id, table_name, source_object, load_type, pk_columns,
+     watermark_column, watermark_type, watermark_overlap, target_schema, load_order) values
+  ('WHOLESALE','PARTNER_ACCOUNT','WHOLESALE.PARTNER_ACCOUNT','FULL',      'ACCOUNT_ID','MODIFIED_TS', null,       0, 'BRONZE', 10),
+  ('WHOLESALE','WHOLESALE_USAGE','WHOLESALE.WHOLESALE_USAGE','WATERMARK', 'USAGE_ID',  'MODIFIED_TS','TIMESTAMP', 1, 'BRONZE', 20);
+
+-- =============================================================================================
+-- ONE EXAMPLE PER VARIANT (reference; not inserted). Column order:
+--   source_id, table_name, <file_pattern|source_object>, load_type, pk_columns,
+--   watermark_column, watermark_type, watermark_overlap, partition_column, target_schema, load_order
+-- =============================================================================================
+-- LOAD_TYPE variants -------------------------------------------------------------------------
+--  FULL      complete snapshot; MERGE + soft-delete missing keys. Deletes ARE detected.
+--    ('BSS_ORA','CUSTOMER','.*CUSTOMER_.*\\.parquet','FULL','CUSTOMER_ID',null,null,0,null,'BRONZE',10)
+--
+--  INIT      one-off seed of a brand-new table; behaves like FULL, then switch the row to INCR/WATERMARK.
+--    ('BSS_ORA','CUSTOMER','.*CUSTOMER_INIT_.*\\.parquet','INIT','CUSTOMER_ID',null,null,0,null,'BRONZE',10)
+--
+--  INCR      a delta produced elsewhere (ADF keeps its own bookmark); MERGE only, no delete detection.
+--    ('BSS_ORA','USAGE_DAILY','.*USAGE_DAILY_.*\\.parquet','INCR','USAGE_ID',null,null,0,null,'BRONZE',30)
+--
+--  PARTITION replace only the partitions present in this load; delete sweep scoped to them.
+--    ('BSS_ORA','USAGE_DAILY','.*USAGE_DAILY_.*\\.parquet','PARTITION','USAGE_ID',null,null,0,'USAGE_DATE','BRONZE',30)
+--
+--  WATERMARK bounded delta; MERGE only (like INCR). Needs WATERMARK_COLUMN + WATERMARK_TYPE.
+--    see the three type variants below.
+--
+-- WATERMARK_TYPE variants --------------------------------------------------------------------
+--  TIMESTAMP catches INSERTS and UPDATES (the column changes when a row is modified).
+--            OVERLAP is in DAYS. Bound: col > DATEADD(day, -overlap, '<last>'::TIMESTAMP_NTZ)
+--    ('WHOLESALE','WHOLESALE_USAGE','WHOLESALE.WHOLESALE_USAGE','WATERMARK','USAGE_ID','MODIFIED_TS','TIMESTAMP',1,null,'BRONZE',20)
+--
+--  DATE      same as TIMESTAMP but day-grain; OVERLAP in DAYS.
+--            Bound: col > DATEADD(day, -overlap, '<last>'::DATE)
+--    ('WHOLESALE','WHOLESALE_USAGE','WHOLESALE.WHOLESALE_USAGE','WATERMARK','USAGE_ID','USAGE_DATE','DATE',7,null,'BRONZE',20)
+--
+--  NUMBER    monotonically increasing id / sequence. OVERLAP in RAW UNITS.
+--            Bound: col > (<last> - overlap)
+--            WARNING: an id does NOT change when a row is updated, so this detects INSERTS ONLY.
+--            Use it for append-only feeds; use TIMESTAMP if rows can be modified.
+--    ('WHOLESALE','WHOLESALE_USAGE','WHOLESALE.WHOLESALE_USAGE','WATERMARK','USAGE_ID','USAGE_ID','NUMBER',100,null,'BRONZE',20)
+--
+-- WATERMARK_OVERLAP ---------------------------------------------------------------------------
+--   0   no lookback - fastest, but a row arriving late (below the watermark) is never loaded.
+--   1-N re-read that far back each run to catch late arrivals; the SILVER MERGE absorbs the
+--       repeats and ROW_HK means unchanged rows do not even update.
+--
+-- Other flags ---------------------------------------------------------------------------------
+--   allow_empty: permit a legitimately empty FULL/INIT snapshot (otherwise the empty-guard errors)
+--     update adm.etl_tables set allow_empty = true where source_id='BSS_ORA' and table_name='SERVICE_PLAN';
+--   active_flag: take a table out of the run without deleting its config
+--     update adm.etl_tables set active_flag = false where source_id='BSS_ORA' and table_name='USAGE_DAILY';
+--   target_schema: land somewhere other than BRONZE (e.g. RAW for a future semi-structured pattern)
 
 -- Verify
 select * from adm.etl_sources order by source_id;
-select * from adm.etl_tables order by source_id, load_order;
+select source_id, table_name, load_type, pk_columns,
+       watermark_column, watermark_type, watermark_overlap,
+       partition_column, target_schema, load_order, allow_empty
+  from adm.etl_tables order by source_id, load_order;
+
+-- Watermark registry: what the next WATERMARK run will use as its lower bound, and what ADF
+-- should read for a FILE source. NULL = no successful run has recorded a value yet.
+select source_id, table_name, ppn_id as last_ppn_id, watermark_value as last_watermark
+  from adm.ppn_process
+ where UPPER(status) in ('SUCCESS','SKIP') and watermark_value is not null
+qualify row_number() over (partition by source_id, table_name order by ppn_id desc) = 1
+ order by source_id, table_name;

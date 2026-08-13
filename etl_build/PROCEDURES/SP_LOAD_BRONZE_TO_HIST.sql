@@ -78,7 +78,9 @@ BEGIN
     /* 3. RECONCILE HISTORY STRUCTURE TO BRONZE (create / add columns) --- */
     /*    DDL first — must run OUTSIDE the transaction below.             */
     v_phase := 'SYNC_HIST';
-    CALL ADM.SP_SYNC_TABLE_STRUCTURE(:v_src_sch, :v_hist_sch, :v_table) INTO :v_sync;
+    CALL ADM.SP_SYNC_TABLE_STRUCTURE(
+        P_SOURCE_SCHEMA => :v_src_sch, P_TARGET_SCHEMA => :v_hist_sch,
+        P_TABLE_NAME => :v_table) INTO :v_sync;
     IF (GET(:v_sync, 'status')::STRING <> 'SUCCESS') THEN
         v_error_msg := 'Structure sync failed: ' || COALESCE(GET(:v_sync, 'message')::STRING, '(no message)');
         RAISE e_failed;

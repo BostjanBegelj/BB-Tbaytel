@@ -7,6 +7,8 @@
 --   FULL / INIT : MERGE (insert new, update where ROW_HK differs, un-delete on reappear),
 --                 then soft-delete SILVER keys absent from the snapshot (IS_DELETED=TRUE).
 --   INCR        : MERGE only (partial feed can't detect deletes).
+--   WATERMARK   : identical to INCR here - a watermark-bounded delta is still a partial feed,
+--                 so deletes cannot be inferred. The watermark only bounds EXTRACTION (landing).
 --   PARTITION   : same MERGE, but soft-delete is scoped to only the PARTITION_COLUMN
 --                 values present in this load (untouched partitions are left alone).
 -- Config-driven; same helpers + child-error pattern. RUN_ID resolved by SP_LOG_STEP.
@@ -149,7 +151,9 @@ BEGIN
 
     /* 4b. RECONCILE SILVER STRUCTURE TO BRONZE business cols ------------ */
     v_phase := 'SYNC_SILVER';
-    CALL ADM.SP_SYNC_TABLE_STRUCTURE(:v_src_sch, 'SILVER', :v_table, 'METADATA$FILENAME') INTO :v_sync;
+    CALL ADM.SP_SYNC_TABLE_STRUCTURE(
+        P_SOURCE_SCHEMA => :v_src_sch, P_TARGET_SCHEMA => 'SILVER',
+        P_TABLE_NAME => :v_table, P_EXCLUDE_CSV => 'METADATA$FILENAME') INTO :v_sync;
     IF (GET(:v_sync, 'status')::STRING <> 'SUCCESS') THEN
         v_error_msg := 'Structure sync failed: ' || COALESCE(GET(:v_sync, 'message')::STRING, '(no message)');
         RAISE e_failed;

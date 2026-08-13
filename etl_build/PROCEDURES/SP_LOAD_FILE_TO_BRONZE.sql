@@ -38,6 +38,10 @@ DECLARE
     v_pattern     STRING;
     v_pattern_esc STRING;
     v_target_sch  STRING;
+    v_wm_col      STRING;
+    v_wm_type     STRING;
+    v_wm_expr     STRING;
+    v_wm_new      STRING;
 
     v_db          STRING  DEFAULT UPPER(CURRENT_DATABASE());
     v_target_fq   STRING;
@@ -66,8 +70,9 @@ BEGIN
           THIS procedure's own read - it catches config removed mid-run and standalone calls. */
     v_phase := 'READ_CONFIG';
     SELECT COUNT(*), MAX(s.stage_name), MAX(s.file_format), MAX(t.file_pattern),
-           MAX(UPPER(COALESCE(t.target_schema, 'BRONZE')))
-      INTO :v_cfg_count, :v_stage, :v_format, :v_pattern, :v_target_sch
+           MAX(UPPER(COALESCE(t.target_schema, 'BRONZE'))), MAX(t.watermark_column),
+           MAX(UPPER(t.watermark_type))
+      INTO :v_cfg_count, :v_stage, :v_format, :v_pattern, :v_target_sch, :v_wm_col, :v_wm_type
       FROM ADM.ETL_TABLES t
       JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
      WHERE t.source_id = :v_source_id
@@ -154,9 +159,27 @@ BEGIN
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
-    /* 8. COUNT ---------------------------------------------------------- */
+    /* 8. COUNT + record the watermark reached --------------------------- */
     v_phase := 'COUNT';
     SELECT COUNT(*) INTO :v_row_count FROM IDENTIFIER(:v_target_fq) WHERE PPN_ID = :v_ppn_id;
+
+    -- ADVISORY watermark: this procedure never filters - ADF decides which rows to extract for
+    -- FILE sources. But if WATERMARK_COLUMN is configured we still record the MAX that actually
+    -- landed, so ADF can read it back from PPN_PROCESS.WATERMARK_VALUE as its next lower bound
+    -- (one watermark registry for both source patterns). Derived from the data, not the clock.
+    IF (v_wm_col IS NOT NULL AND v_row_count > 0) THEN
+        v_phase := 'WATERMARK_WRITE';
+        -- explicit format per declared WATERMARK_TYPE, so the stored text is session-independent
+        v_wm_expr := CASE v_wm_type
+            WHEN 'TIMESTAMP' THEN 'TO_VARCHAR(MAX("' || v_wm_col || '"), ''YYYY-MM-DD HH24:MI:SS.FF9'')'
+            WHEN 'DATE'      THEN 'TO_VARCHAR(MAX("' || v_wm_col || '"), ''YYYY-MM-DD'')'
+            ELSE                  'TO_VARCHAR(MAX("' || v_wm_col || '"))'
+        END;
+        v_sql := 'SELECT ' || v_wm_expr || ' FROM ' || v_target_fq || ' WHERE PPN_ID = ' || v_ppn_id;
+        v_last_sql := v_sql;
+        EXECUTE IMMEDIATE v_sql;
+        SELECT $1 INTO :v_wm_new FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+    END IF;
 
     /* 9. LOG SUCCESS (state is owned by SP_RUN_TABLE_LOAD) -------------- */
     v_phase := 'LOG_SUCCESS';
@@ -174,7 +197,9 @@ BEGIN
         P_MESSAGE     => 'SUCCESS: loaded ' || :v_row_count || ' row(s) into ' || :v_target_sch || '.' || :v_table || '.',
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_FILE_TO_BRONZE','ppn_id',:v_ppn_id),
-            'results', OBJECT_CONSTRUCT('files', :v_file_list, 'rows_loaded', :v_row_count)
+            'results', OBJECT_CONSTRUCT('files', :v_file_list, 'rows_loaded', :v_row_count,
+                                        'watermark_column', :v_wm_col, 'watermark_type', :v_wm_type,
+                                        'watermark_to', :v_wm_new)
         )
     ) INTO :v_log_rows;
 
@@ -183,6 +208,7 @@ BEGIN
         'procedure', 'SP_LOAD_FILE_TO_BRONZE',
         'source_id', v_source_id,
         'table', v_table,
+        'watermark_value', v_wm_new,     -- advisory: MAX reached, stored for ADF to read back
         'target_object', v_target_fq,
         'rows_loaded', v_row_count,
         'ppn_id', v_ppn_id

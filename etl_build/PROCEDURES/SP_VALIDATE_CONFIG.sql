@@ -1,8 +1,10 @@
 -- ADM.SP_VALIDATE_CONFIG - pre-flight validation of the ACTIVE config rows before a run.
 -- Checks (set-based, all active rows at once):
 --   * ETL_SOURCES: SOURCE_TYPE valid; FILE has STAGE_NAME + FILE_FORMAT; DATABASE has SOURCE_DB.
---   * ETL_TABLES : LOAD_TYPE valid; INCR has PK_COLUMNS; PARTITION has PARTITION_COLUMN;
---                  SOURCE_ID resolves to an active source; FILE has FILE_PATTERN; DATABASE has SOURCE_OBJECT.
+--   * ETL_TABLES : LOAD_TYPE valid; INCR/WATERMARK have PK_COLUMNS; WATERMARK has WATERMARK_COLUMN
+--                  + a valid WATERMARK_TYPE (TIMESTAMP|DATE|NUMBER); WATERMARK_OVERLAP >= 0;
+--                  PARTITION has PARTITION_COLUMN; SOURCE_ID resolves to an active source;
+--                  FILE has FILE_PATTERN; DATABASE has SOURCE_OBJECT.
 -- Physical file/stage presence is checked at load time by the load procedure (it LISTs the stage).
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 -- All violations are collected, logged once in the ERROR-first envelope, then raised.
@@ -55,11 +57,32 @@ BEGIN
         -- ETL_TABLES -------------------------------------------------------
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] invalid LOAD_TYPE [' || COALESCE(load_type, '<null>') || ']'
           FROM ADM.ETL_TABLES
-         WHERE active_flag AND UPPER(COALESCE(load_type, '')) NOT IN ('FULL', 'INIT', 'INCR', 'PARTITION')
+         WHERE active_flag AND UPPER(COALESCE(load_type, '')) NOT IN ('FULL', 'INIT', 'INCR', 'PARTITION', 'WATERMARK')
         UNION ALL
-        SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] LOAD_TYPE INCR requires PK_COLUMNS'
+        SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] LOAD_TYPE ' || UPPER(load_type) || ' requires PK_COLUMNS'
           FROM ADM.ETL_TABLES
-         WHERE active_flag AND UPPER(load_type) = 'INCR' AND (pk_columns IS NULL OR TRIM(pk_columns) = '')
+         WHERE active_flag AND UPPER(load_type) IN ('INCR', 'WATERMARK')
+           AND (pk_columns IS NULL OR TRIM(pk_columns) = '')
+        UNION ALL
+        SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] LOAD_TYPE WATERMARK requires WATERMARK_COLUMN'
+          FROM ADM.ETL_TABLES
+         WHERE active_flag AND UPPER(load_type) = 'WATERMARK'
+           AND (watermark_column IS NULL OR TRIM(watermark_column) = '')
+        UNION ALL
+        SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] LOAD_TYPE WATERMARK requires WATERMARK_TYPE'
+          FROM ADM.ETL_TABLES
+         WHERE active_flag AND UPPER(load_type) = 'WATERMARK'
+           AND (watermark_type IS NULL OR TRIM(watermark_type) = '')
+        UNION ALL
+        SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] invalid WATERMARK_TYPE ['
+               || watermark_type || '] - expected TIMESTAMP | DATE | NUMBER'
+          FROM ADM.ETL_TABLES
+         WHERE active_flag AND watermark_type IS NOT NULL
+           AND UPPER(watermark_type) NOT IN ('TIMESTAMP', 'DATE', 'NUMBER')
+        UNION ALL
+        SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] WATERMARK_OVERLAP must be >= 0'
+          FROM ADM.ETL_TABLES
+         WHERE active_flag AND COALESCE(watermark_overlap, 0) < 0
         UNION ALL
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] LOAD_TYPE PARTITION requires PARTITION_COLUMN'
           FROM ADM.ETL_TABLES

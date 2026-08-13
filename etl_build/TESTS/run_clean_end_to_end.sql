@@ -54,8 +54,22 @@ CALL ADM.SP_FINALIZE_RUN($PPN);
 SELECT PPN_ID, RUN_ID, STATUS, START_TS, END_TS FROM ADM.PPN WHERE PPN_ID = $PPN;
 
 -- Per-table state: one row per table that actually ran, each SUCCESS or SKIP.
-SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, ROWS_MERGED, ROWS_DELETED
+-- WATERMARK_VALUE is populated for tables with a WATERMARK_COLUMN (the MAX that landed).
+SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, ROWS_MERGED, ROWS_DELETED, WATERMARK_VALUE
   FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN ORDER BY SOURCE_ID, TABLE_NAME;
+
+-- WATERMARK demo (WHOLESALE_USAGE, a DATABASE source -> the filter is enforced):
+--   Run 1 has no lower bound, so it loads everything and records MAX(MODIFIED_TS).
+--   Then add a newer row in the source and run again - only that row should land:
+--     INSERT INTO SHARE_SIM_DB.WHOLESALE.WHOLESALE_USAGE
+--       (usage_id, account_id, usage_date, units, amount, modified_ts)
+--       VALUES (50099, 9001, CURRENT_DATE(), 7777, 999.99, CURRENT_TIMESTAMP());
+--     CALL ADM.SP_CREATE_PPN('wm-test');  -- capture the new PPN, then:
+--     CALL ADM.SP_RUN_TABLE_LOAD(<new ppn>, 'WHOLESALE', 'WHOLESALE_USAGE');
+--     SELECT COUNT(*) FROM DEV_DB.BRONZE.WHOLESALE_USAGE;   -- expect just the 1 new row
+--   The bound used and reached is visible in the log:
+--     SELECT DETAIL_JSON:results:watermark_from::STRING, DETAIL_JSON:results:watermark_to::STRING
+--       FROM ADM.PPN_LOG WHERE PHASE = 'LOAD_DATABASE_TO_BRONZE' ORDER BY LOG_ID DESC LIMIT 1;
 
 -- Empty-snapshot guard (optional): a FULL/INIT table landing 0 rows must ERROR, not wipe SILVER.
 --   Simulate by pointing a FULL table's FILE_PATTERN at a file with no rows, or by emptying its

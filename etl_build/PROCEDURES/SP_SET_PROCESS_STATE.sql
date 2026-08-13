@@ -1,6 +1,9 @@
--- ADM.SP_SET_PROCESS_STATE - helper: UPDATE the ADM.PPN_PROCESS state row for one
--- PPN_ID x SOURCE_ID x TABLE_NAME. PPN_PROCESS is authoritative run-time state and drives
--- the GOLD gate.
+-- ADM.SP_SET_PROCESS_STATE - helper: upsert the ADM.PPN_PROCESS state row for one
+-- PPN_ID x SOURCE_ID x TABLE_NAME. PPN_PROCESS is the authoritative per-table run-time state
+-- (used for monitoring and rerun decisions).
+--
+-- Callers use NAMED arguments (P_STATUS => ..., P_ERROR_MSG => ...) - never positional - so a
+-- future parameter change cannot silently misalign a call site.
 --
 -- Creates the row on first touch (the calling table load "claims" itself) and updates it
 -- thereafter. There is no pre-seeded run plan: the set of tables processed in a run is decided
@@ -40,28 +43,30 @@ COMMENT = 'Helper: upsert ADM.PPN_PROCESS for one run x table. Non-null args ove
 EXECUTE AS CALLER
 AS
 DECLARE
-    v_now TIMESTAMP_NTZ(9) DEFAULT CURRENT_TIMESTAMP();
+    v_now    TIMESTAMP_NTZ(9) DEFAULT CURRENT_TIMESTAMP();
+    -- normalise once: the RUNNING reset test must not depend on the caller's casing
+    v_status STRING DEFAULT UPPER(NULLIF(TRIM(P_STATUS), ''));
 BEGIN
     MERGE INTO ADM.PPN_PROCESS t
     USING (SELECT :P_PPN_ID AS PPN_ID, :P_SOURCE_ID AS SOURCE_ID, :P_TABLE_NAME AS TABLE_NAME) s
        ON t.PPN_ID = s.PPN_ID AND t.SOURCE_ID = s.SOURCE_ID AND t.TABLE_NAME = s.TABLE_NAME
     WHEN MATCHED THEN UPDATE SET
-        STATUS          = COALESCE(:P_STATUS, t.STATUS),
+        STATUS          = COALESCE(:v_status, t.STATUS),
         PHASE           = COALESCE(:P_PHASE,  t.PHASE),
         -- a new RUNNING = fresh (re)attempt: reset the attempt fields + re-stamp START_TS
-        ROWS_EXTRACTED  = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_EXTRACTED, t.ROWS_EXTRACTED)),
-        ROWS_MERGED     = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_MERGED,    t.ROWS_MERGED)),
-        ROWS_DELETED    = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ROWS_DELETED,   t.ROWS_DELETED)),
+        ROWS_EXTRACTED  = IFF(:v_status = 'RUNNING', NULL, COALESCE(:P_ROWS_EXTRACTED, t.ROWS_EXTRACTED)),
+        ROWS_MERGED     = IFF(:v_status = 'RUNNING', NULL, COALESCE(:P_ROWS_MERGED,    t.ROWS_MERGED)),
+        ROWS_DELETED    = IFF(:v_status = 'RUNNING', NULL, COALESCE(:P_ROWS_DELETED,   t.ROWS_DELETED)),
         WATERMARK_VALUE = COALESCE(:P_WATERMARK_VALUE, t.WATERMARK_VALUE),
-        ERROR_MSG       = IFF(:P_STATUS = 'RUNNING', NULL, COALESCE(:P_ERROR_MSG, t.ERROR_MSG)),
-        START_TS        = IFF(:P_STATUS = 'RUNNING', :v_now, t.START_TS),
-        END_TS          = IFF(:P_STATUS = 'RUNNING', NULL, IFF(:P_SET_END, :v_now, t.END_TS))
+        ERROR_MSG       = IFF(:v_status = 'RUNNING', NULL, COALESCE(:P_ERROR_MSG, t.ERROR_MSG)),
+        START_TS        = IFF(:v_status = 'RUNNING', :v_now, t.START_TS),
+        END_TS          = IFF(:v_status = 'RUNNING', NULL, IFF(:P_SET_END, :v_now, t.END_TS))
     WHEN NOT MATCHED THEN INSERT
         (PPN_ID, SOURCE_ID, TABLE_NAME, STATUS, PHASE,
          ROWS_EXTRACTED, ROWS_MERGED, ROWS_DELETED,
          WATERMARK_VALUE, ERROR_MSG, START_TS, END_TS)
         VALUES
-        (:P_PPN_ID, :P_SOURCE_ID, :P_TABLE_NAME, :P_STATUS, :P_PHASE,
+        (:P_PPN_ID, :P_SOURCE_ID, :P_TABLE_NAME, :v_status, :P_PHASE,
          :P_ROWS_EXTRACTED, :P_ROWS_MERGED, :P_ROWS_DELETED,
          :P_WATERMARK_VALUE, :P_ERROR_MSG, :v_now, IFF(:P_SET_END, :v_now, NULL));
 
