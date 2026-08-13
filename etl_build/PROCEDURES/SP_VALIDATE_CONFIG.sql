@@ -1,8 +1,8 @@
 -- ADM.SP_VALIDATE_CONFIG - pre-flight validation of the ACTIVE config rows before a run.
 -- Checks (set-based, all active rows at once):
---   * ETL_SOURCES: SOURCE_TYPE valid; PARQUET has STAGE_NAME + FILE_FORMAT; DATASHARE has SHARE_DB.
+--   * ETL_SOURCES: SOURCE_TYPE valid; FILE has STAGE_NAME + FILE_FORMAT; DATABASE has SOURCE_DB.
 --   * ETL_TABLES : LOAD_TYPE valid; INCR has PK_COLUMNS; PARTITION has PARTITION_COLUMN;
---                  SOURCE_ID resolves to an active source; PARQUET has FILE_PATTERN; DATASHARE has SOURCE_OBJECT.
+--                  SOURCE_ID resolves to an active source; FILE has FILE_PATTERN; DATABASE has SOURCE_OBJECT.
 -- Physical file/stage presence is checked at load time by the load procedure (it LISTs the stage).
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 -- All violations are collected, logged once in the ERROR-first envelope, then raised.
@@ -42,15 +42,15 @@ BEGIN
         -- ETL_SOURCES ------------------------------------------------------
         SELECT 'ETL_SOURCES [' || source_id || '] invalid SOURCE_TYPE [' || COALESCE(source_type, '<null>') || ']' AS reason
           FROM ADM.ETL_SOURCES
-         WHERE active_flag AND UPPER(COALESCE(source_type, '')) NOT IN ('PARQUET', 'DATASHARE')
+         WHERE active_flag AND UPPER(COALESCE(source_type, '')) NOT IN ('FILE', 'DATABASE')
         UNION ALL
-        SELECT 'ETL_SOURCES [' || source_id || '] PARQUET requires STAGE_NAME and FILE_FORMAT'
+        SELECT 'ETL_SOURCES [' || source_id || '] FILE requires STAGE_NAME and FILE_FORMAT'
           FROM ADM.ETL_SOURCES
-         WHERE active_flag AND UPPER(source_type) = 'PARQUET' AND (stage_name IS NULL OR file_format IS NULL)
+         WHERE active_flag AND UPPER(source_type) = 'FILE' AND (stage_name IS NULL OR file_format IS NULL)
         UNION ALL
-        SELECT 'ETL_SOURCES [' || source_id || '] DATASHARE requires SHARE_DB'
+        SELECT 'ETL_SOURCES [' || source_id || '] DATABASE requires SOURCE_DB'
           FROM ADM.ETL_SOURCES
-         WHERE active_flag AND UPPER(source_type) = 'DATASHARE' AND share_db IS NULL
+         WHERE active_flag AND UPPER(source_type) = 'DATABASE' AND source_db IS NULL
         UNION ALL
         -- ETL_TABLES -------------------------------------------------------
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] invalid LOAD_TYPE [' || COALESCE(load_type, '<null>') || ']'
@@ -70,14 +70,14 @@ BEGIN
          WHERE t.active_flag
            AND NOT EXISTS (SELECT 1 FROM ADM.ETL_SOURCES s WHERE s.source_id = t.source_id AND s.active_flag)
         UNION ALL
-        SELECT 'ETL_TABLES [' || t.source_id || '.' || t.table_name || '] PARQUET requires FILE_PATTERN'
+        SELECT 'ETL_TABLES [' || t.source_id || '.' || t.table_name || '] FILE requires FILE_PATTERN'
           FROM ADM.ETL_TABLES t JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-         WHERE t.active_flag AND s.active_flag AND UPPER(s.source_type) = 'PARQUET'
+         WHERE t.active_flag AND s.active_flag AND UPPER(s.source_type) = 'FILE'
            AND (t.file_pattern IS NULL OR TRIM(t.file_pattern) = '')
         UNION ALL
-        SELECT 'ETL_TABLES [' || t.source_id || '.' || t.table_name || '] DATASHARE requires SOURCE_OBJECT'
+        SELECT 'ETL_TABLES [' || t.source_id || '.' || t.table_name || '] DATABASE requires SOURCE_OBJECT'
           FROM ADM.ETL_TABLES t JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-         WHERE t.active_flag AND s.active_flag AND UPPER(s.source_type) = 'DATASHARE'
+         WHERE t.active_flag AND s.active_flag AND UPPER(s.source_type) = 'DATABASE'
            AND (t.source_object IS NULL OR TRIM(t.source_object) = '')
     );
 

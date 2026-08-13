@@ -1,9 +1,11 @@
--- ADM.SP_LOAD_SHARE_TO_BRONZE - DATASHARE load pattern: read one table directly from
--- an inbound shared database into <TARGET_SCHEMA>.<TABLE> (default BRONZE).
+-- ADM.SP_LOAD_DATABASE_TO_BRONZE - DATABASE load pattern: read one table directly from another
+-- Snowflake database (SOURCE_DB.SOURCE_OBJECT) into <TARGET_SCHEMA>.<TABLE> (default BRONZE).
+-- The source database may be an inbound data share or an ordinary database - identical to this
+-- procedure either way; only SELECT access matters.
 -- No stage / no COPY: a per-PPN snapshot via CREATE OR REPLACE TABLE ... AS SELECT,
 -- so the batch is stable and idempotent per PPN. Config-driven, mirrors
 -- SP_LOAD_FILE_TO_BRONZE (same helpers, same child error pattern).
--- Always lands a FULL snapshot of the shared object into BRONZE.
+-- Always lands a FULL snapshot of the source object into BRONZE.
 -- NOTE: WATERMARK_COLUMN is currently NOT used by this procedure or by SILVER - an INCR
 -- data-share table is landed in full and then MERGEd (correct, just not optimised). Watermark-
 -- bounded extraction is a future optimisation, not current behaviour.
@@ -14,24 +16,24 @@ use role dev_sysadmin;
 use database dev_db;
 use schema adm;
 
-CREATE OR REPLACE PROCEDURE ADM.SP_LOAD_SHARE_TO_BRONZE(
+CREATE OR REPLACE PROCEDURE ADM.SP_LOAD_DATABASE_TO_BRONZE(
     "P_PPN_ID"     NUMBER(38,0),
     "P_SOURCE_ID"  VARCHAR,
     "P_TABLE_NAME" VARCHAR
 )
 RETURNS VARIANT
 LANGUAGE SQL
-COMMENT = 'DATASHARE pattern: per-PPN snapshot from SHARE_DB.SOURCE_OBJECT into <TARGET_SCHEMA>.<TABLE>. Config-driven.'
+COMMENT = 'DATABASE pattern: per-PPN snapshot from SOURCE_DB.SOURCE_OBJECT into <TARGET_SCHEMA>.<TABLE>. Config-driven.'
 EXECUTE AS CALLER
 AS
 DECLARE
-    e_failed EXCEPTION (-20800, 'SP_LOAD_SHARE_TO_BRONZE failed.');
+    e_failed EXCEPTION (-20800, 'SP_LOAD_DATABASE_TO_BRONZE failed.');
 
     v_ppn_id      NUMBER  DEFAULT P_PPN_ID;
     v_source_id   STRING  DEFAULT NULLIF(TRIM(P_SOURCE_ID), '');
     v_table       STRING  DEFAULT UPPER(NULLIF(TRIM(P_TABLE_NAME), ''));
 
-    v_share_db    STRING;
+    v_source_db    STRING;
     v_source_obj  STRING;
     v_target_sch  STRING;
 
@@ -61,9 +63,9 @@ BEGIN
           SOURCE_TYPE, so no source-type check is repeated here). This is only a guard on
           THIS procedure's own read - it catches config removed mid-run and standalone calls. */
     v_phase := 'READ_CONFIG';
-    SELECT COUNT(*), MAX(s.share_db), MAX(t.source_object),
+    SELECT COUNT(*), MAX(s.source_db), MAX(t.source_object),
            MAX(UPPER(COALESCE(t.target_schema, 'BRONZE')))
-      INTO :v_cfg_count, :v_share_db, :v_source_obj, :v_target_sch
+      INTO :v_cfg_count, :v_source_db, :v_source_obj, :v_target_sch
       FROM ADM.ETL_TABLES t
       JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
      WHERE t.source_id = :v_source_id
@@ -76,12 +78,12 @@ BEGIN
                     || '] at landing time, found ' || v_cfg_count || ' (config changed mid-run?).';
         RAISE e_failed;
     END IF;
-    IF (v_share_db IS NULL OR v_source_obj IS NULL) THEN
-        v_error_msg := 'Config incomplete: DATASHARE needs SHARE_DB (source) and SOURCE_OBJECT (table).';
+    IF (v_source_db IS NULL OR v_source_obj IS NULL) THEN
+        v_error_msg := 'Config incomplete: DATABASE needs SOURCE_DB (source) and SOURCE_OBJECT (table).';
         RAISE e_failed;
     END IF;
 
-    v_src_fq    := v_share_db || '.' || v_source_obj;                       -- e.g. SHARE_SIM_DB.WHOLESALE.PARTNER_ACCOUNT
+    v_src_fq    := v_source_db || '.' || v_source_obj;                       -- e.g. SHARE_SIM_DB.WHOLESALE.PARTNER_ACCOUNT
     v_target_fq := '"' || v_db || '"."' || v_target_sch || '"."' || v_table || '"';
 
     SELECT PPN_TIMESTAMP INTO :v_ppn_ts FROM ADM.PPN WHERE PPN_ID = :v_ppn_id;
@@ -104,7 +106,7 @@ BEGIN
     v_phase := 'LOG_SUCCESS';
     CALL ADM.SP_LOG_STEP(
         P_PPN_ID      => :v_ppn_id,
-        P_PHASE       => 'LOAD_SHARE_TO_BRONZE',
+        P_PHASE       => 'LOAD_DATABASE_TO_BRONZE',
         P_STATUS      => 'SUCCESS',
         P_SOURCE_ID   => :v_source_id,
         P_TABLE_NAME  => :v_table,
@@ -115,14 +117,14 @@ BEGIN
         P_ROW_COUNT   => :v_row_count,
         P_MESSAGE     => 'SUCCESS: snapshot ' || :v_row_count || ' row(s) into ' || :v_target_sch || '.' || :v_table || '.',
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
-            'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_SHARE_TO_BRONZE','ppn_id',:v_ppn_id),
+            'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_DATABASE_TO_BRONZE','ppn_id',:v_ppn_id),
             'results', OBJECT_CONSTRUCT('source', :v_src_fq, 'rows_loaded', :v_row_count)
         )::STRING
     ) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
         'status', 'SUCCESS',
-        'procedure', 'SP_LOAD_SHARE_TO_BRONZE',
+        'procedure', 'SP_LOAD_DATABASE_TO_BRONZE',
         'source_id', v_source_id,
         'table', v_table,
         'target_object', v_target_fq,
@@ -136,23 +138,23 @@ EXCEPTION
         BEGIN
             CALL ADM.SP_LOG_STEP(
                 P_PPN_ID      => :v_ppn_id,
-                P_PHASE       => 'LOAD_SHARE_TO_BRONZE',
+                P_PHASE       => 'LOAD_DATABASE_TO_BRONZE',
                 P_STATUS      => 'ERROR',
                 P_SOURCE_ID   => :v_source_id,
                 P_TABLE_NAME  => :v_table,
                 P_LOG_START   => :v_started_at,
                 P_LOG_END     => CURRENT_TIMESTAMP(),
-                P_MESSAGE     => 'ERROR [SP_LOAD_SHARE_TO_BRONZE/' || :v_phase || ']: ' || :v_final_msg,
+                P_MESSAGE     => 'ERROR [SP_LOAD_DATABASE_TO_BRONZE/' || :v_phase || ']: ' || :v_final_msg,
                 P_DETAIL_JSON => OBJECT_CONSTRUCT(
                     'ERROR', OBJECT_CONSTRUCT(
-                        'source_procedure', 'SP_LOAD_SHARE_TO_BRONZE',
+                        'source_procedure', 'SP_LOAD_DATABASE_TO_BRONZE',
                         'source_phase',     :v_phase,
                         'message',          :v_final_msg,
                         'last_sql',         NULLIF(:v_last_sql, ''),
                         'sqlcode',          IFF(:v_error_msg IS NULL, :SQLCODE, NULL),
                         'sqlstate',         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)
                     ),
-                    'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_SHARE_TO_BRONZE','ppn_id',:v_ppn_id)
+                    'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_DATABASE_TO_BRONZE','ppn_id',:v_ppn_id)
                 )::STRING
             ) INTO :v_log_rows;
         EXCEPTION
@@ -161,7 +163,7 @@ EXCEPTION
 
         RETURN OBJECT_CONSTRUCT(
             'status', 'ERROR',
-            'procedure', 'SP_LOAD_SHARE_TO_BRONZE',
+            'procedure', 'SP_LOAD_DATABASE_TO_BRONZE',
             'phase', v_phase,
             'message', v_final_msg,
             'last_sql', v_last_sql

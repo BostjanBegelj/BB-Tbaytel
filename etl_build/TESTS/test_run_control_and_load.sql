@@ -51,7 +51,7 @@ SELECT PHASE, STATUS, TABLE_NAME, ROW_COUNT, DURATION_MSEC, MESSAGE
   FROM ADM.PPN_LOG WHERE PPN_ID = $PPN_ID ORDER BY LOG_ID;
 
 -- =============================================================================
--- TEST 3b — SP_LOAD_SHARE_TO_BRONZE  (WHOLESALE data-share tables)
+-- TEST 3b — SP_LOAD_DATABASE_TO_BRONZE  (WHOLESALE tables in the source database)
 --   Caller needs SELECT on SHARE_SIM_DB.WHOLESALE. The SHARE_SIM_DB script grants
 --   it to DEV_TRANSFORMER; if testing as DEV_SYSADMIN, grant it once:
 --     use role sysadmin;
@@ -60,8 +60,8 @@ SELECT PHASE, STATUS, TABLE_NAME, ROW_COUNT, DURATION_MSEC, MESSAGE
 --     grant select on all tables in schema share_sim_db.wholesale to role dev_sysadmin;
 --     use role dev_sysadmin;
 -- =============================================================================
-CALL ADM.SP_LOAD_SHARE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
-CALL ADM.SP_LOAD_SHARE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'WHOLESALE_USAGE');
+CALL ADM.SP_LOAD_DATABASE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
+CALL ADM.SP_LOAD_DATABASE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'WHOLESALE_USAGE');
 SELECT * FROM DEV_DB.BRONZE.PARTNER_ACCOUNT;
 SELECT SOURCE_ID, TABLE_NAME, STATUS, ROWS_EXTRACTED
   FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN_ID AND SOURCE_ID = 'WHOLESALE';
@@ -131,8 +131,9 @@ SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, ROWS_MERGED, ROWS_D
   FROM ADM.PPN_PROCESS WHERE PPN_ID = $PPN_ID ORDER BY SOURCE_ID, TABLE_NAME;
 
 -- =============================================================================
--- TEST 4 — negative: PARQUET loader against a DATASHARE source (expect ERROR obj)
---   Returns status=ERROR with a clear message; no SP_LOAD_SHARE_TO_BRONZE yet.
+-- TEST 4 — negative: FILE loader called for a DATABASE source (expect ERROR obj)
+--   Its config has no STAGE_NAME/FILE_FORMAT/FILE_PATTERN, so it fails with a clear message.
+--   (The source-type mismatch check itself now lives only in SP_RUN_TABLE_LOAD's dispatch.)
 -- =============================================================================
 CALL ADM.SP_LOAD_FILE_TO_BRONZE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'WHOLESALE', P_TABLE_NAME => 'PARTNER_ACCOUNT');
 

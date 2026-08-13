@@ -1,6 +1,6 @@
 -- ADM.SP_RUN_TABLE_LOAD - per-table orchestrator (the "wrapped" model). ADF calls this
 -- ONCE per table; it chains the Snowflake phases and returns one result:
---   1. LANDING     -> SP_LOAD_FILE_TO_BRONZE (PARQUET) | SP_LOAD_SHARE_TO_BRONZE (DATASHARE)
+--   1. LANDING     -> SP_LOAD_FILE_TO_BRONZE (FILE) | SP_LOAD_DATABASE_TO_BRONZE (DATABASE)
 --   2. EMPTY GUARD -> FULL/INIT with 0 rows landed and ALLOW_EMPTY=FALSE -> ERROR (see below)
 --   3. CHANGE      -> SP_CHECK_DATA_CHANGE; if identical -> mark PPN_PROCESS SKIP and stop
 --   4. HIST        -> SP_LOAD_BRONZE_TO_HIST
@@ -91,10 +91,10 @@ BEGIN
 
     /* 2. LANDING (dispatch by SOURCE_TYPE) ------------------------------ */
     v_phase := 'LANDING';
-    IF (v_source_type = 'PARQUET') THEN
+    IF (v_source_type = 'FILE') THEN
         CALL ADM.SP_LOAD_FILE_TO_BRONZE(:v_ppn_id, :v_source_id, :v_table) INTO :v_land;
-    ELSEIF (v_source_type = 'DATASHARE') THEN
-        CALL ADM.SP_LOAD_SHARE_TO_BRONZE(:v_ppn_id, :v_source_id, :v_table) INTO :v_land;
+    ELSEIF (v_source_type = 'DATABASE') THEN
+        CALL ADM.SP_LOAD_DATABASE_TO_BRONZE(:v_ppn_id, :v_source_id, :v_table) INTO :v_land;
     ELSE
         v_error_msg := 'Unknown SOURCE_TYPE [' || COALESCE(v_source_type, '<null>') || '] for [' || v_source_id || '].';
         RAISE e_failed;

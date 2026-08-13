@@ -10,8 +10,8 @@ use schema adm;
 create or replace table adm.etl_tables (
     source_id        varchar      not null comment 'FK -> ADM.ETL_SOURCES.SOURCE_ID.',
     table_name       varchar      not null comment 'Logical/target table name (e.g. CUSTOMER).',
-    source_object    varchar      comment 'DATASHARE: <schema>.<table> in the shared DB.',
-    file_pattern     varchar      comment 'PARQUET: regex matching the file(s) for one load, e.g. .*CUSTOMER_.*\\.parquet.',
+    source_object    varchar      comment 'DATABASE: <schema>.<table> inside SOURCE_DB.',
+    file_pattern     varchar      comment 'FILE: regex matching the file(s) for one load, e.g. .*CUSTOMER_.*\\.parquet.',
     load_type        varchar      not null comment 'FULL | INIT | INCR | PARTITION.',
     pk_columns       varchar      comment 'Comma-separated business PK columns (required for INCR).',
     watermark_column varchar      comment 'Column driving the incremental high-water mark (e.g. MODIFIED_TS).',

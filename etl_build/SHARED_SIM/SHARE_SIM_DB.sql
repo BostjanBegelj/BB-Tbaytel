@@ -9,7 +9,10 @@
 --   (When a real provider account exists, replace this whole script with that one
 --    line + the same grants below; the ETL that reads it stays identical.)
 --
--- How share-based sources differ from the file sources (EXT_STAGE_AZURE):
+-- Registered in config as SOURCE_TYPE = 'DATABASE' (SOURCE_DB = 'SHARE_SIM_DB'). The loader
+-- treats a shared and an ordinary source database identically - only SELECT access matters.
+--
+-- How DATABASE sources differ from FILE sources (EXT_STAGE_AZURE):
 --   * No stage / no COPY - the ETL reads straight from SHARE_SIM_DB.<schema>.<table>.
 --   * Current-state snapshot with a MODIFIED_TS column:
 --       - freshness DQ = MAX(MODIFIED_TS)

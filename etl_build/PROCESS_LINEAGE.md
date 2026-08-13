@@ -40,7 +40,7 @@ sequenceDiagram
     SF-->>ADF: table list for THIS PPN
 
     Note over ADF,SF: PER TABLE (ForEach, by LOAD_ORDER)
-    opt SOURCE_TYPE = PARQUET
+    opt SOURCE_TYPE = FILE
         ADF->>SRC: extract table (Copy activity)
         SRC-->>BLOB: write Parquet to Bronze container
     end
@@ -73,7 +73,7 @@ sequenceDiagram
 | 3b | ADF → SF | `SP_PREPARE_RUN(PPN_ID)` — **freeze the run plan**: seed one `PENDING` row per active table | `ETL_SOURCES`,`ETL_TABLES` | `PPN_PROCESS` (PENDING), `PPN_LOG` |
 | 4 | ADF | Lookup the **frozen plan** for this PPN, `SOURCE_ID <> '_RUN_'` (excludes the run-level DQ marker), order by `LOAD_ORDER` | `PPN_PROCESS` | — |
 | — | | **Per table (ForEach):** | | |
-| 5a | ADF → SRC/Blob | *(PARQUET only)* Copy activity: extract source → Parquet in Blob | source | Blob |
+| 5a | ADF → SRC/Blob | *(FILE sources only)* Copy activity: extract source → file(s) in Blob | source | Blob |
 | 6 | ADF → SF | `SP_RUN_TABLE_LOAD(PPN_ID, SOURCE_ID, TABLE)` — wraps landing (file/share) → check-change → HIST → SILVER; SKIP if identical | config, `BRONZE`, `BRONZE_HIST` | `BRONZE`/`BRONZE_HIST`/`SILVER`, `PPN_PROCESS`, `PPN_LOG` |
 | — | | **Run level (after all tables):** | | |
 | 7 | ADF → SF | `SP_RUN_DQ_CHECKS(PPN_ID)` — *AntFarm, pending* | `SILVER` | DQ verdict → `PPN_PROCESS`/`PPN_LOG` |
@@ -133,7 +133,7 @@ status per table for its own alerting.)
 ## Build status (2026-07-17)
 
 **Built:** `SP_CREATE_PPN`, `SP_VALIDATE_CONFIG`, `SP_PREPARE_RUN`, `SP_RUN_TABLE_LOAD` (wrapper),
-`SP_LOAD_FILE_TO_BRONZE`, `SP_LOAD_SHARE_TO_BRONZE`, `SP_CHECK_DATA_CHANGE`,
+`SP_LOAD_FILE_TO_BRONZE`, `SP_LOAD_DATABASE_TO_BRONZE`, `SP_CHECK_DATA_CHANGE`,
 `SP_LOAD_BRONZE_TO_HIST`, `SP_LOAD_BRONZE_TO_SILVER`, `SP_SYNC_TABLE_STRUCTURE`,
 `SP_GATE_CHECK`, `SP_FINALIZE_RUN`, `SP_REFRESH_GOLD` (**stub**), helpers `SP_LOG_STEP` /
 `SP_SET_PROCESS_STATE`, `SP_CLOSE_PPN`. (Loaders + run-control tested on DEV; gate/finalize newly built.)

@@ -1,5 +1,7 @@
--- ADM.SP_LOAD_FILE_TO_BRONZE - PARQUET load pattern: COPY the file(s) for one table
--- from EXT_STAGE_AZURE into <TARGET_SCHEMA>.<TABLE> (default BRONZE).
+-- ADM.SP_LOAD_FILE_TO_BRONZE - FILE load pattern: COPY the file(s) for one table from the
+-- configured stage into <TARGET_SCHEMA>.<TABLE> (default BRONZE).
+-- Format-agnostic: the source's FILE_FORMAT decides Parquet / CSV / JSON / ... - this
+-- procedure only passes it to COPY.
 -- Config-driven: reads the ETL_SOURCES + ETL_TABLES row for (SOURCE_ID, TABLE_NAME),
 -- so it runs standalone (no orchestrator needed) and is called per-table later.
 -- Single responsibility = land the file(s). Schema handling is Snowflake-native
@@ -20,7 +22,7 @@ CREATE OR REPLACE PROCEDURE ADM.SP_LOAD_FILE_TO_BRONZE(
 )
 RETURNS VARIANT
 LANGUAGE SQL
-COMMENT = 'PARQUET pattern: COPY the configured file(s) for one table from the stage into <TARGET_SCHEMA>.<TABLE>. Config-driven.'
+COMMENT = 'FILE pattern: COPY the configured file(s) for one table from the stage into <TARGET_SCHEMA>.<TABLE>. Config-driven.'
 EXECUTE AS CALLER
 AS
 DECLARE
