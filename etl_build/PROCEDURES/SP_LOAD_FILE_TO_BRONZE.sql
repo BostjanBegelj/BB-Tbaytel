@@ -30,7 +30,6 @@ DECLARE
     v_source_id   STRING  DEFAULT NULLIF(TRIM(P_SOURCE_ID), '');
     v_table       STRING  DEFAULT UPPER(NULLIF(TRIM(P_TABLE_NAME), ''));
 
-    v_source_type STRING;
     v_stage       STRING;
     v_stage_root  STRING;
     v_format      STRING;
@@ -58,34 +57,25 @@ BEGIN
         v_error_msg := 'P_PPN_ID, P_SOURCE_ID and P_TABLE_NAME are required.';
         RAISE e_failed;
     END IF;
-    IF (NOT REGEXP_LIKE(v_table, '^[A-Z][A-Z0-9_]*$')) THEN
-        v_error_msg := 'Invalid P_TABLE_NAME [' || v_table || '].';
-        RAISE e_failed;
-    END IF;
 
     /* 2. READ CONFIG ---------------------------------------------------- */
+    /*    SP_RUN_TABLE_LOAD owns the authoritative config validation (and dispatches on
+          SOURCE_TYPE, so no source-type check is repeated here). This is only a guard on
+          THIS procedure's own read - it catches config removed mid-run and standalone calls. */
     v_phase := 'READ_CONFIG';
-    SELECT COUNT(*)
-      INTO :v_cfg_count
+    SELECT COUNT(*), MAX(s.stage_name), MAX(s.file_format), MAX(t.file_pattern),
+           MAX(UPPER(COALESCE(t.target_schema, 'BRONZE')))
+      INTO :v_cfg_count, :v_stage, :v_format, :v_pattern, :v_target_sch
       FROM ADM.ETL_TABLES t
       JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-     WHERE t.source_id = :v_source_id AND t.table_name = :v_table
-       AND t.active_flag AND s.active_flag;
-    IF (v_cfg_count = 0) THEN
-        v_error_msg := 'No active ETL_TABLES/ETL_SOURCES config for [' || v_source_id || '.' || v_table || '].';
-        RAISE e_failed;
-    END IF;
+     WHERE t.source_id = :v_source_id
+       AND t.table_name = :v_table
+       AND t.active_flag
+       AND s.active_flag;
 
-    SELECT UPPER(s.source_type), s.stage_name, s.file_format, t.file_pattern,
-           UPPER(COALESCE(t.target_schema, 'BRONZE'))
-      INTO :v_source_type, :v_stage, :v_format, :v_pattern, :v_target_sch
-      FROM ADM.ETL_TABLES t
-      JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-     WHERE t.source_id = :v_source_id AND t.table_name = :v_table
-       AND t.active_flag AND s.active_flag;
-
-    IF (v_source_type <> 'PARQUET') THEN
-        v_error_msg := 'Source [' || v_source_id || '] is ' || v_source_type || ', not PARQUET (use SP_LOAD_SHARE_TO_BRONZE).';
+    IF (v_cfg_count <> 1) THEN
+        v_error_msg := 'Expected exactly 1 active config row for [' || v_source_id || '.' || v_table
+                    || '] at landing time, found ' || v_cfg_count || ' (config changed mid-run?).';
         RAISE e_failed;
     END IF;
     IF (v_stage IS NULL OR v_format IS NULL OR v_pattern IS NULL) THEN

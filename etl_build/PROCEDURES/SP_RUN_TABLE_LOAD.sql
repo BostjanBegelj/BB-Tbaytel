@@ -58,23 +58,32 @@ BEGIN
         v_error_msg := 'P_PPN_ID, P_SOURCE_ID and P_TABLE_NAME are required.';
         RAISE e_failed;
     END IF;
-
-    SELECT COUNT(*)
-      INTO :v_cfg_count
-      FROM ADM.ETL_TABLES t
-      JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-     WHERE t.source_id = :v_source_id AND t.table_name = :v_table
-       AND t.active_flag AND s.active_flag;
-    IF (v_cfg_count = 0) THEN
-        v_error_msg := 'No active ETL_TABLES/ETL_SOURCES config for [' || v_source_id || '.' || v_table || '].';
+    -- Identifier shape check, done ONCE here for the whole chain: the table name is embedded
+    -- into dynamic SQL by the child procedures, so it must be a plain SQL identifier.
+    IF (NOT REGEXP_LIKE(v_table, '^[A-Z][A-Z0-9_]*$')) THEN
+        v_error_msg := 'Invalid P_TABLE_NAME [' || v_table || '] - must be a plain identifier.';
         RAISE e_failed;
     END IF;
 
-    SELECT UPPER(s.source_type), UPPER(t.load_type), t.allow_empty
-      INTO :v_source_type, :v_load_type, :v_allow_empty
+    -- Single aggregate read: always returns exactly one row, so it cannot throw on 0 matches,
+    -- and COUNT(*) lets us insist on EXACTLY ONE config row. Snowflake does NOT enforce PRIMARY
+    -- KEY constraints, so duplicate (SOURCE_ID, TABLE_NAME) rows in ETL_TABLES are possible and
+    -- would otherwise give a nondeterministic SOURCE_TYPE / LOAD_TYPE.
+    -- This is the AUTHORITATIVE config validation for the table; children only guard their own read.
+    SELECT COUNT(*), MAX(UPPER(s.source_type)), MAX(UPPER(t.load_type)), BOOLOR_AGG(t.allow_empty)
+      INTO :v_cfg_count, :v_source_type, :v_load_type, :v_allow_empty
       FROM ADM.ETL_TABLES t
       JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-     WHERE t.source_id = :v_source_id AND t.table_name = :v_table AND t.active_flag AND s.active_flag;
+     WHERE t.source_id = :v_source_id
+       AND t.table_name = :v_table
+       AND t.active_flag
+       AND s.active_flag;
+
+    IF (v_cfg_count <> 1) THEN
+        v_error_msg := 'Expected exactly 1 active ETL_TABLES/ETL_SOURCES config row for ['
+                    || v_source_id || '.' || v_table || '], found ' || v_cfg_count || '.';
+        RAISE e_failed;
+    END IF;
 
     /* 1b. CLAIM THE TABLE: wrapper owns PPN_PROCESS state from here on.
            RUNNING also resets any previous attempt's error/counts/END_TS.   */

@@ -31,7 +31,6 @@ DECLARE
     v_source_id   STRING  DEFAULT NULLIF(TRIM(P_SOURCE_ID), '');
     v_table       STRING  DEFAULT UPPER(NULLIF(TRIM(P_TABLE_NAME), ''));
 
-    v_source_type STRING;
     v_share_db    STRING;
     v_source_obj  STRING;
     v_target_sch  STRING;
@@ -56,34 +55,25 @@ BEGIN
         v_error_msg := 'P_PPN_ID, P_SOURCE_ID and P_TABLE_NAME are required.';
         RAISE e_failed;
     END IF;
-    IF (NOT REGEXP_LIKE(v_table, '^[A-Z][A-Z0-9_]*$')) THEN
-        v_error_msg := 'Invalid P_TABLE_NAME [' || v_table || '].';
-        RAISE e_failed;
-    END IF;
 
     /* 2. READ CONFIG ---------------------------------------------------- */
+    /*    SP_RUN_TABLE_LOAD owns the authoritative config validation (and dispatches on
+          SOURCE_TYPE, so no source-type check is repeated here). This is only a guard on
+          THIS procedure's own read - it catches config removed mid-run and standalone calls. */
     v_phase := 'READ_CONFIG';
-    SELECT COUNT(*)
-      INTO :v_cfg_count
+    SELECT COUNT(*), MAX(s.share_db), MAX(t.source_object),
+           MAX(UPPER(COALESCE(t.target_schema, 'BRONZE')))
+      INTO :v_cfg_count, :v_share_db, :v_source_obj, :v_target_sch
       FROM ADM.ETL_TABLES t
       JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-     WHERE t.source_id = :v_source_id AND t.table_name = :v_table
-       AND t.active_flag AND s.active_flag;
-    IF (v_cfg_count = 0) THEN
-        v_error_msg := 'No active ETL_TABLES/ETL_SOURCES config for [' || v_source_id || '.' || v_table || '].';
-        RAISE e_failed;
-    END IF;
+     WHERE t.source_id = :v_source_id
+       AND t.table_name = :v_table
+       AND t.active_flag
+       AND s.active_flag;
 
-    SELECT UPPER(s.source_type), s.share_db, t.source_object,
-           UPPER(COALESCE(t.target_schema, 'BRONZE'))
-      INTO :v_source_type, :v_share_db, :v_source_obj, :v_target_sch
-      FROM ADM.ETL_TABLES t
-      JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-     WHERE t.source_id = :v_source_id AND t.table_name = :v_table
-       AND t.active_flag AND s.active_flag;
-
-    IF (v_source_type <> 'DATASHARE') THEN
-        v_error_msg := 'Source [' || v_source_id || '] is ' || v_source_type || ', not DATASHARE (use SP_LOAD_FILE_TO_BRONZE).';
+    IF (v_cfg_count <> 1) THEN
+        v_error_msg := 'Expected exactly 1 active config row for [' || v_source_id || '.' || v_table
+                    || '] at landing time, found ' || v_cfg_count || ' (config changed mid-run?).';
         RAISE e_failed;
     END IF;
     IF (v_share_db IS NULL OR v_source_obj IS NULL) THEN

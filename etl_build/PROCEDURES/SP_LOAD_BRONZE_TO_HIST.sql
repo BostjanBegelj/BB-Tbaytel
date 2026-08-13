@@ -51,28 +51,25 @@ BEGIN
         v_error_msg := 'P_PPN_ID, P_SOURCE_ID and P_TABLE_NAME are required.';
         RAISE e_failed;
     END IF;
-    IF (NOT REGEXP_LIKE(v_table, '^[A-Z][A-Z0-9_]*$')) THEN
-        v_error_msg := 'Invalid P_TABLE_NAME [' || v_table || '].';
-        RAISE e_failed;
-    END IF;
 
     /* 2. READ CONFIG (target/source layer) ------------------------------ */
+    /*    Authoritative validation lives in SP_RUN_TABLE_LOAD; this only guards this
+          procedure's own read (config removed mid-run / standalone call).            */
     v_phase := 'READ_CONFIG';
-    SELECT COUNT(*)
-      INTO :v_cfg_count
+    SELECT COUNT(*), MAX(UPPER(COALESCE(t.target_schema, 'BRONZE')))
+      INTO :v_cfg_count, :v_src_sch
       FROM ADM.ETL_TABLES t
       JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-     WHERE t.source_id = :v_source_id AND t.table_name = :v_table
-       AND t.active_flag AND s.active_flag;
-    IF (v_cfg_count = 0) THEN
-        v_error_msg := 'No active ETL_TABLES/ETL_SOURCES config for [' || v_source_id || '.' || v_table || '].';
+     WHERE t.source_id = :v_source_id
+       AND t.table_name = :v_table
+       AND t.active_flag
+       AND s.active_flag;
+
+    IF (v_cfg_count <> 1) THEN
+        v_error_msg := 'Expected exactly 1 active config row for [' || v_source_id || '.' || v_table
+                    || '] at HIST time, found ' || v_cfg_count || ' (config changed mid-run?).';
         RAISE e_failed;
     END IF;
-
-    SELECT UPPER(COALESCE(t.target_schema, 'BRONZE'))
-      INTO :v_src_sch
-      FROM ADM.ETL_TABLES t
-     WHERE t.source_id = :v_source_id AND t.table_name = :v_table AND t.active_flag;
 
     v_hist_sch := v_src_sch || '_HIST';                                    -- BRONZE -> BRONZE_HIST
     v_src_fq   := '"' || v_db || '"."' || v_src_sch  || '"."' || v_table || '"';
