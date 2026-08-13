@@ -119,7 +119,7 @@ BEGIN
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_DATABASE_TO_BRONZE','ppn_id',:v_ppn_id),
             'results', OBJECT_CONSTRUCT('source', :v_src_fq, 'rows_loaded', :v_row_count)
-        )::STRING
+        )
     ) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
@@ -155,7 +155,7 @@ EXCEPTION
                         'sqlstate',         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)
                     ),
                     'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_DATABASE_TO_BRONZE','ppn_id',:v_ppn_id)
-                )::STRING
+                )
             ) INTO :v_log_rows;
         EXCEPTION
             WHEN OTHER THEN NULL;

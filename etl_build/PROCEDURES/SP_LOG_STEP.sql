@@ -2,6 +2,9 @@
 -- Computes DURATION_MSEC from start/end. Looks RUN_ID up from ADM.PPN by PPN_ID
 -- (RUN_ID is captured once by SP_CREATE_PPN), so callers never pass RUN_ID.
 -- Handler-free so callers can guard the CALL (logging must never mask a real failure).
+-- P_DETAIL_JSON is VARIANT: callers pass OBJECT_CONSTRUCT(...) as-is (no ::STRING), and the
+-- stored value is queryable directly, e.g.
+--   SELECT DETAIL_JSON:ERROR:source_phase::STRING, DETAIL_JSON:ERROR:message::STRING FROM ADM.PPN_LOG;
 
 use role dev_sysadmin;
 use database dev_db;
@@ -19,7 +22,7 @@ CREATE OR REPLACE PROCEDURE ADM.SP_LOG_STEP(
     "P_TARGET_OBJECT" VARCHAR DEFAULT NULL,
     "P_ROW_COUNT"     NUMBER(38,0) DEFAULT NULL,
     "P_MESSAGE"       VARCHAR DEFAULT NULL,
-    "P_DETAIL_JSON"   VARCHAR DEFAULT NULL           -- JSON string; ERROR block first per logging standard
+    "P_DETAIL_JSON"   VARIANT DEFAULT NULL           -- pass OBJECT_CONSTRUCT(...) directly, no ::STRING cast
 )
 RETURNS NUMBER(38,0)
 LANGUAGE SQL

@@ -23,7 +23,7 @@ create or replace table adm.ppn_log (
     target_object varchar          comment 'Target object/name.',
     row_count     number(38,0)     comment 'Rows processed in this step.',
     message       varchar          comment 'Human-readable log message.',
-    detail_json   varchar          comment 'Structured detail (JSON string; ERROR block first per logging standard).',
+    detail_json   variant          comment 'Structured detail (VARIANT; ERROR block first per logging standard). Query directly, e.g. DETAIL_JSON:ERROR:message::STRING.',
     constraint pk_adm_ppn_log primary key (log_id),
     constraint fk_adm_ppn_log_ppn foreign key (ppn_id) references adm.ppn (ppn_id)
 ) comment = 'Run-time: append-only per-step log for forensics (PPN_ prefix).';

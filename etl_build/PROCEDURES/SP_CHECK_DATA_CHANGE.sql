@@ -199,7 +199,7 @@ BEGIN
             'results', OBJECT_CONSTRUCT('action',:v_action,'is_identical',:v_identical,
                                         'prev_ppn',:v_prev_ppn,'self_hist_rows',:v_self_rows,
                                         'new_count',:v_new_cnt,'prev_count',:v_prev_cnt)
-        )::STRING
+        )
     ) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
@@ -238,7 +238,7 @@ EXCEPTION
                         'sqlstate',         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)
                     ),
                     'context', OBJECT_CONSTRUCT('procedure','SP_CHECK_DATA_CHANGE','ppn_id',:v_ppn_id)
-                )::STRING
+                )
             ) INTO :v_log_rows;
         EXCEPTION
             WHEN OTHER THEN NULL;

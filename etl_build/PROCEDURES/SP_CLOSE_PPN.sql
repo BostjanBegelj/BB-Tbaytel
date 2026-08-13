@@ -73,7 +73,7 @@ BEGIN
                                 'END: run completed successfully.')),
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_CLOSE_PPN','ppn_id',:v_ppn_id,'run_status',:v_status)
-        )::STRING
+        )
     ) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
@@ -104,7 +104,7 @@ EXCEPTION
                             'sqlstate',         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)
                         ),
                         'context', OBJECT_CONSTRUCT('procedure','SP_CLOSE_PPN','ppn_id',:v_ppn_id)
-                    )::STRING
+                    )
                 ) INTO :v_log_rows;
             END IF;
         EXCEPTION

@@ -133,7 +133,7 @@ BEGIN
                 'ERROR', OBJECT_CONSTRUCT('source_procedure','SP_RUN_TABLE_LOAD','source_phase','EMPTY_GUARD',
                     'message',:v_empty_msg,'load_type',:v_load_type,'rows_loaded',:v_landed),
                 'context', OBJECT_CONSTRUCT('procedure','SP_RUN_TABLE_LOAD','ppn_id',:v_ppn_id)
-            )::STRING
+            )
         ) INTO :v_log_rows;
         RETURN OBJECT_CONSTRUCT('status','ERROR','procedure','SP_RUN_TABLE_LOAD','failed_phase','EMPTY_GUARD',
                                 'message',v_empty_msg,'source_id',v_source_id,'table',v_table,
@@ -217,7 +217,7 @@ EXCEPTION
                         'message',:v_final_msg,'sqlcode',IFF(:v_error_msg IS NULL,:SQLCODE,NULL),
                         'sqlstate',IFF(:v_error_msg IS NULL,:SQLSTATE,NULL)),
                     'context', OBJECT_CONSTRUCT('procedure','SP_RUN_TABLE_LOAD','ppn_id',:v_ppn_id)
-                )::STRING
+                )
             ) INTO :v_log_rows;
         EXCEPTION
             WHEN OTHER THEN NULL;

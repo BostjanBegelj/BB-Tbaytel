@@ -27,7 +27,7 @@ BEGIN
         P_MESSAGE     => 'STUB: GOLD refresh placeholder (no-op).',
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_REFRESH_GOLD','ppn_id',:v_ppn,'note','stub — not yet implemented')
-        )::STRING
+        )
     ) INTO :v_log;
 
     RETURN OBJECT_CONSTRUCT('status','SUCCESS','procedure','SP_REFRESH_GOLD','action','STUB','ppn_id',:v_ppn);

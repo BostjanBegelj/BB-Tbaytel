@@ -55,7 +55,7 @@ BEGIN
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_FINALIZE_RUN','ppn_id',:v_ppn),
             'gate', :v_gate
-        )::STRING
+        )
     ) INTO :v_log;
 
     /* 2. GOLD (only if gate passed) ------------------------------------- */

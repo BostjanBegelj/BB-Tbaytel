@@ -40,7 +40,7 @@ BEGIN
             P_MESSAGE     => 'START: run created.',
             P_DETAIL_JSON => OBJECT_CONSTRUCT(
                 'context', OBJECT_CONSTRUCT('procedure','SP_CREATE_PPN','ppn_id',:v_ppn_id)
-            )::STRING
+            )
         ) INTO :v_log_rows;
     EXCEPTION
         WHEN OTHER THEN NULL;

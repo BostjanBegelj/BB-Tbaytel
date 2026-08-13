@@ -5,7 +5,7 @@
 -- Config-driven: reads the ETL_SOURCES + ETL_TABLES row for (SOURCE_ID, TABLE_NAME),
 -- so it runs standalone (no orchestrator needed) and is called per-table later.
 -- Single responsibility = land the file(s). Schema handling is Snowflake-native
--- (INFER_SCHEMA + ENABLE_SCHEMA_EVOLUTION); "skip identical" is a separate proc (deferred).
+-- (INFER_SCHEMA + ENABLE_SCHEMA_EVOLUTION); change detection lives in SP_CHECK_DATA_CHANGE.
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 -- Child pattern: writes PPN_LOG only and RETURNS a status object. PPN_PROCESS state is owned
 -- solely by SP_RUN_TABLE_LOAD, so a partially-completed table can never look complete.
@@ -81,7 +81,7 @@ BEGIN
         RAISE e_failed;
     END IF;
     IF (v_stage IS NULL OR v_format IS NULL OR v_pattern IS NULL) THEN
-        v_error_msg := 'Config incomplete: PARQUET needs STAGE_NAME + FILE_FORMAT (source) and FILE_PATTERN (table).';
+        v_error_msg := 'Config incomplete: FILE needs STAGE_NAME + FILE_FORMAT (source) and FILE_PATTERN (table).';
         RAISE e_failed;
     END IF;
 
@@ -175,7 +175,7 @@ BEGIN
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_FILE_TO_BRONZE','ppn_id',:v_ppn_id),
             'results', OBJECT_CONSTRUCT('files', :v_file_list, 'rows_loaded', :v_row_count)
-        )::STRING
+        )
     ) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
@@ -211,7 +211,7 @@ EXCEPTION
                         'sqlstate',         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)
                     ),
                     'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_FILE_TO_BRONZE','ppn_id',:v_ppn_id)
-                )::STRING
+                )
             ) INTO :v_log_rows;
         EXCEPTION
             WHEN OTHER THEN NULL;

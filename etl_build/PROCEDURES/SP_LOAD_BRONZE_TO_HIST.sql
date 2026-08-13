@@ -96,7 +96,7 @@ BEGIN
             P_DETAIL_JSON   => OBJECT_CONSTRUCT(
                 'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_BRONZE_TO_HIST','ppn_id',:v_ppn_id),
                 'sync', :v_sync
-            )::STRING
+            )
         ) INTO :v_log_rows;
     END IF;
 
@@ -149,7 +149,7 @@ BEGIN
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_BRONZE_TO_HIST','ppn_id',:v_ppn_id),
             'results', OBJECT_CONSTRUCT('rows_appended', :v_row_count)
-        )::STRING
+        )
     ) INTO :v_log_rows;
 
     RETURN OBJECT_CONSTRUCT(
@@ -194,7 +194,7 @@ EXCEPTION
                         'sqlstate',         IFF(:v_error_msg IS NULL, :SQLSTATE, NULL)
                     ),
                     'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_BRONZE_TO_HIST','ppn_id',:v_ppn_id)
-                )::STRING
+                )
             ) INTO :v_log_rows;
         EXCEPTION
             WHEN OTHER THEN NULL;
