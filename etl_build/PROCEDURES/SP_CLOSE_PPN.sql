@@ -2,6 +2,9 @@
 -- run-level END (or ERROR) log row. Last step of every run.
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 -- ERROR-first logging envelope; re-raises so the ADF activity also fails.
+-- CLOSE ONCE: if the run is no longer RUNNING it returns action=ALREADY_CLOSED and changes
+-- nothing, so a second call (e.g. an orchestrator error path after SP_FINALIZE_RUN already
+-- closed the run) cannot overwrite the final status or END_TS.
 
 use role dev_sysadmin;
 use database dev_db;
@@ -28,6 +31,7 @@ DECLARE
     v_ppn_start  TIMESTAMP_NTZ(9);
     v_end_ts     TIMESTAMP_NTZ(9);
     v_ppn_count  NUMBER DEFAULT 0;
+    v_cur_status STRING;
     v_error_msg  STRING;
     v_log_status STRING;
     v_log_rows   NUMBER DEFAULT 0;
@@ -43,14 +47,43 @@ BEGIN
     END IF;
 
     v_phase := 'CHECK_PPN';
-    SELECT COUNT(*), MIN(START_TS)
-      INTO :v_ppn_count, :v_ppn_start
+    SELECT COUNT(*), MIN(START_TS), MAX(UPPER(STATUS))
+      INTO :v_ppn_count, :v_ppn_start, :v_cur_status
       FROM ADM.PPN
      WHERE PPN_ID = :v_ppn_id;
 
     IF (v_ppn_count = 0) THEN
         v_error_msg := 'PPN_ID [' || TO_VARCHAR(v_ppn_id) || '] not found in ADM.PPN.';
         RAISE e_failed;
+    END IF;
+
+    /* CLOSE ONCE: a run is closed by exactly one caller. SP_FINALIZE_RUN closes then re-raises,
+       so an orchestrator error path may call this again - without a guard the second call would
+       overwrite END_TS (stretching the recorded duration) or even flip a SUCCESS run to ERROR
+       after the fact. Report the existing outcome instead of rewriting history. */
+    IF (v_cur_status <> 'RUNNING') THEN
+        CALL ADM.SP_LOG_STEP(
+            P_PPN_ID      => :v_ppn_id,
+            P_PHASE       => 'CLOSE_PPN',
+            P_STATUS      => 'SKIP',
+            P_LOG_START   => :v_started_at,
+            P_LOG_END     => CURRENT_TIMESTAMP(),
+            P_MESSAGE     => 'SKIP: run already closed as ' || v_cur_status || '; left unchanged.',
+            P_DETAIL_JSON => OBJECT_CONSTRUCT(
+                'context', OBJECT_CONSTRUCT('procedure','SP_CLOSE_PPN','ppn_id',:v_ppn_id),
+                'results', OBJECT_CONSTRUCT('action','ALREADY_CLOSED','existing_status',:v_cur_status,
+                                            'requested_status',:v_status)
+            )
+        ) INTO :v_log_rows;
+
+        RETURN OBJECT_CONSTRUCT(
+            'status', 'SUCCESS',
+            'procedure', 'SP_CLOSE_PPN',
+            'action', 'ALREADY_CLOSED',
+            'ppn_id', v_ppn_id,
+            'run_status', v_cur_status,
+            'requested_status', v_status
+        );
     END IF;
 
     v_phase := 'UPDATE_PPN';

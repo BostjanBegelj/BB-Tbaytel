@@ -1,10 +1,19 @@
--- ADM.SP_VALIDATE_CONFIG - pre-flight validation of the ACTIVE config rows before a run.
--- Checks (set-based, all active rows at once):
+-- ADM.SP_VALIDATE_CONFIG - pre-flight validation of the IN-SCOPE config rows before a run.
+--
+-- SCOPE: active ETL_SOURCES, plus active ETL_TABLES rows whose source is ALSO active.
+--   Switching off a source or a table removes its config from validation completely, so a
+--   parked / half-finished row can never block the nightly run. There is no table-list
+--   parameter: a run may process a varying subset of tables, but the config is validated as
+--   a whole once per PPN (cheap, set-based, and catches drift in rows scheduled for later).
+--
+-- Checks (set-based, all in-scope rows at once):
 --   * ETL_SOURCES: SOURCE_TYPE valid; FILE has STAGE_NAME + FILE_FORMAT; DATABASE has SOURCE_DB.
 --   * ETL_TABLES : LOAD_TYPE valid; INCR/WATERMARK have PK_COLUMNS; WATERMARK has WATERMARK_COLUMN
---                  + a valid WATERMARK_TYPE (TIMESTAMP|DATE|NUMBER); WATERMARK_OVERLAP >= 0;
---                  PARTITION has PARTITION_COLUMN; SOURCE_ID resolves to an active source;
---                  FILE has FILE_PATTERN; DATABASE has SOURCE_OBJECT.
+--                  + a valid WATERMARK_TYPE (TIMESTAMP|DATE|NUMBER); WATERMARK_OVERLAP >= 0
+--                  (>= 1 for DATE); PARTITION has PARTITION_COLUMN; FILE has FILE_PATTERN;
+--                  DATABASE has SOURCE_OBJECT.
+--   * ORPHAN     : an active table whose SOURCE_ID does not exist in ETL_SOURCES at all.
+--                  (An active table under an INACTIVE source is out of scope, not an error.)
 -- Physical file/stage presence is checked at load time by the load procedure (it LISTs the stage).
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
 -- All violations are collected, logged once in the ERROR-first envelope, then raised.
@@ -18,7 +27,7 @@ CREATE OR REPLACE PROCEDURE ADM.SP_VALIDATE_CONFIG(
 )
 RETURNS VARIANT
 LANGUAGE SQL
-COMMENT = 'Pre-flight: validate active ETL_SOURCES / ETL_TABLES rows. Logs + raises on any violation.'
+COMMENT = 'Pre-flight: validate active ETL_SOURCES + active ETL_TABLES of active sources. Logs + raises on any violation.'
 EXECUTE AS CALLER
 AS
 DECLARE
@@ -39,78 +48,92 @@ BEGIN
     END IF;
 
     v_phase := 'COLLECT_VIOLATIONS';
+    /* SCOPE: only ACTIVE sources, and only ACTIVE tables belonging to an ACTIVE source.
+       Deactivating a source or a table takes its config entirely out of scope - a half-finished
+       row that is switched off must never block a run. Defined once in the CTEs below so no
+       individual check can forget half of the condition.                                     */
     SELECT ARRAY_AGG(reason) INTO :v_violations
     FROM (
+        WITH src AS (            -- active sources
+            SELECT * FROM ADM.ETL_SOURCES WHERE active_flag
+        ),
+        tbl AS (                 -- active tables whose source is also active
+            SELECT t.*, UPPER(s.source_type) AS src_type
+              FROM ADM.ETL_TABLES t
+              JOIN src s ON s.source_id = t.source_id
+             WHERE t.active_flag
+        )
         -- ETL_SOURCES ------------------------------------------------------
         SELECT 'ETL_SOURCES [' || source_id || '] invalid SOURCE_TYPE [' || COALESCE(source_type, '<null>') || ']' AS reason
-          FROM ADM.ETL_SOURCES
-         WHERE active_flag AND UPPER(COALESCE(source_type, '')) NOT IN ('FILE', 'DATABASE')
+          FROM src
+         WHERE UPPER(COALESCE(source_type, '')) NOT IN ('FILE', 'DATABASE')
         UNION ALL
         SELECT 'ETL_SOURCES [' || source_id || '] FILE requires STAGE_NAME and FILE_FORMAT'
-          FROM ADM.ETL_SOURCES
-         WHERE active_flag AND UPPER(source_type) = 'FILE' AND (stage_name IS NULL OR file_format IS NULL)
+          FROM src
+         WHERE UPPER(source_type) = 'FILE' AND (stage_name IS NULL OR file_format IS NULL)
         UNION ALL
         SELECT 'ETL_SOURCES [' || source_id || '] DATABASE requires SOURCE_DB'
-          FROM ADM.ETL_SOURCES
-         WHERE active_flag AND UPPER(source_type) = 'DATABASE' AND source_db IS NULL
+          FROM src
+         WHERE UPPER(source_type) = 'DATABASE' AND source_db IS NULL
         UNION ALL
-        -- ETL_TABLES -------------------------------------------------------
+        -- ETL_TABLES (in-scope rows only) ----------------------------------
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] invalid LOAD_TYPE [' || COALESCE(load_type, '<null>') || ']'
-          FROM ADM.ETL_TABLES
-         WHERE active_flag AND UPPER(COALESCE(load_type, '')) NOT IN ('FULL', 'INIT', 'INCR', 'PARTITION', 'WATERMARK')
+          FROM tbl
+         WHERE UPPER(COALESCE(load_type, '')) NOT IN ('FULL', 'INIT', 'INCR', 'PARTITION', 'WATERMARK')
         UNION ALL
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] LOAD_TYPE ' || UPPER(load_type) || ' requires PK_COLUMNS'
-          FROM ADM.ETL_TABLES
-         WHERE active_flag AND UPPER(load_type) IN ('INCR', 'WATERMARK')
+          FROM tbl
+         WHERE UPPER(load_type) IN ('INCR', 'WATERMARK')
            AND (pk_columns IS NULL OR TRIM(pk_columns) = '')
         UNION ALL
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] LOAD_TYPE WATERMARK requires WATERMARK_COLUMN'
-          FROM ADM.ETL_TABLES
-         WHERE active_flag AND UPPER(load_type) = 'WATERMARK'
+          FROM tbl
+         WHERE UPPER(load_type) = 'WATERMARK'
            AND (watermark_column IS NULL OR TRIM(watermark_column) = '')
         UNION ALL
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] LOAD_TYPE WATERMARK requires WATERMARK_TYPE'
-          FROM ADM.ETL_TABLES
-         WHERE active_flag AND UPPER(load_type) = 'WATERMARK'
+          FROM tbl
+         WHERE UPPER(load_type) = 'WATERMARK'
            AND (watermark_type IS NULL OR TRIM(watermark_type) = '')
         UNION ALL
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] invalid WATERMARK_TYPE ['
                || watermark_type || '] - expected TIMESTAMP | DATE | NUMBER'
-          FROM ADM.ETL_TABLES
-         WHERE active_flag AND watermark_type IS NOT NULL
+          FROM tbl
+         WHERE watermark_type IS NOT NULL
            AND UPPER(watermark_type) NOT IN ('TIMESTAMP', 'DATE', 'NUMBER')
         UNION ALL
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] WATERMARK_OVERLAP must be >= 0'
-          FROM ADM.ETL_TABLES
-         WHERE active_flag AND COALESCE(watermark_overlap, 0) < 0
+          FROM tbl
+         WHERE COALESCE(watermark_overlap, 0) < 0
         UNION ALL
         -- A DATE watermark compares at DAY grain with ">", so OVERLAP 0 permanently skips every
         -- row dated exactly on the recorded bound (rows added later the same day are lost, and
         -- tomorrow's bound is higher still). DATE watermarks need at least a 1-day lookback.
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] WATERMARK_TYPE DATE requires '
                || 'WATERMARK_OVERLAP >= 1 (with 0 the same-day rows on the bound are never loaded)'
-          FROM ADM.ETL_TABLES
-         WHERE active_flag AND UPPER(load_type) = 'WATERMARK'
+          FROM tbl
+         WHERE UPPER(load_type) = 'WATERMARK'
            AND UPPER(watermark_type) = 'DATE' AND COALESCE(watermark_overlap, 0) < 1
         UNION ALL
         SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] LOAD_TYPE PARTITION requires PARTITION_COLUMN'
-          FROM ADM.ETL_TABLES
-         WHERE active_flag AND UPPER(load_type) = 'PARTITION' AND (partition_column IS NULL OR TRIM(partition_column) = '')
+          FROM tbl
+         WHERE UPPER(load_type) = 'PARTITION' AND (partition_column IS NULL OR TRIM(partition_column) = '')
         UNION ALL
-        SELECT 'ETL_TABLES [' || t.source_id || '.' || t.table_name || '] references unknown/inactive SOURCE_ID'
+        SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] FILE requires FILE_PATTERN'
+          FROM tbl
+         WHERE src_type = 'FILE' AND (file_pattern IS NULL OR TRIM(file_pattern) = '')
+        UNION ALL
+        SELECT 'ETL_TABLES [' || source_id || '.' || table_name || '] DATABASE requires SOURCE_OBJECT'
+          FROM tbl
+         WHERE src_type = 'DATABASE' AND (source_object IS NULL OR TRIM(source_object) = '')
+        UNION ALL
+        -- ORPHAN: an active table whose SOURCE_ID does not exist at all is a genuine config
+        -- error (typo / deleted source). An active table under an INACTIVE source is NOT an
+        -- error - that is a deliberate switch-off and is simply out of scope above.
+        SELECT 'ETL_TABLES [' || t.source_id || '.' || t.table_name || '] references SOURCE_ID that does not exist in ETL_SOURCES'
           FROM ADM.ETL_TABLES t
          WHERE t.active_flag
-           AND NOT EXISTS (SELECT 1 FROM ADM.ETL_SOURCES s WHERE s.source_id = t.source_id AND s.active_flag)
-        UNION ALL
-        SELECT 'ETL_TABLES [' || t.source_id || '.' || t.table_name || '] FILE requires FILE_PATTERN'
-          FROM ADM.ETL_TABLES t JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-         WHERE t.active_flag AND s.active_flag AND UPPER(s.source_type) = 'FILE'
-           AND (t.file_pattern IS NULL OR TRIM(t.file_pattern) = '')
-        UNION ALL
-        SELECT 'ETL_TABLES [' || t.source_id || '.' || t.table_name || '] DATABASE requires SOURCE_OBJECT'
-          FROM ADM.ETL_TABLES t JOIN ADM.ETL_SOURCES s ON s.source_id = t.source_id
-         WHERE t.active_flag AND s.active_flag AND UPPER(s.source_type) = 'DATABASE'
-           AND (t.source_object IS NULL OR TRIM(t.source_object) = '')
+           AND NOT EXISTS (SELECT 1 FROM ADM.ETL_SOURCES s WHERE s.source_id = t.source_id)
     );
 
     v_count := ARRAY_SIZE(COALESCE(v_violations, ARRAY_CONSTRUCT()));

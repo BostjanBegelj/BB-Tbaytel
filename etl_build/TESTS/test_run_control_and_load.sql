@@ -21,7 +21,7 @@ LIST @DEV_DB.ADM.EXT_STAGE_AZURE/BSS_ORA/;
 -- TEST 1 — SP_CREATE_PPN  (allocate a run; RUN_ID captured here; grab PPN_ID)
 -- =============================================================================
 CALL ADM.SP_CREATE_PPN('test-run-001');
-SET PPN_ID = (SELECT "PPN_ID" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
+SET PPN_ID = (SELECT $1:ppn_id::NUMBER FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
 SELECT $PPN_ID AS PPN_ID;
 SELECT * FROM ADM.PPN WHERE PPN_ID = $PPN_ID;           -- STATUS=RUNNING, RUN_ID set, START_TS set
 
@@ -122,7 +122,7 @@ CALL ADM.SP_CHECK_DATA_CHANGE(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA', P_T
 --   This is the production path (ADF calls this per table). Tip: use a FRESH PPN so the change
 --   check has a prior snapshot to compare against:
 --     CALL ADM.SP_CREATE_PPN('test-run-002');
---     SET PPN2 = (SELECT "PPN_ID" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
+--     SET PPN2 = (SELECT $1:ppn_id::NUMBER FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
 --     -- (re-run SP_LOAD_FILE_TO_BRONZE for a new file/date first if you want a real BRONZE for PPN2)
 -- =============================================================================
 CALL ADM.SP_RUN_TABLE_LOAD(P_PPN_ID => $PPN_ID, P_SOURCE_ID => 'BSS_ORA',   P_TABLE_NAME => 'CUSTOMER');
@@ -177,19 +177,25 @@ SELECT PHASE, STATUS, MESSAGE FROM ADM.PPN_LOG WHERE PPN_ID = $PPN_ID AND PHASE 
 --     PASS  -> SP_REFRESH_GOLD (stub) -> SP_CLOSE_PPN(SUCCESS) -> returns SUCCESS.
 --     FAIL  -> skip GOLD -> SP_CLOSE_PPN(ERROR) -> RE-RAISES (ADF activity fails).
 --   NOTE: earlier negative steps (TEST 4 set PARTNER_ACCOUNT=ERROR on this PPN) will make the
---   gate FAIL here — that is correct fail-closed behavior. For a clean PASS, run a fresh PPN
---   through only SP_RUN_TABLE_LOAD (Test 3g) then finalize.
+--   gate FAIL here — that is correct fail-closed behavior, and ENTRIES_NOT_OK_LIST in the result
+--   names the offending table. For a clean PASS, run a fresh PPN through only SP_RUN_TABLE_LOAD
+--   (Test 3g) then finalize.
+--   P_EXPECTED_COUNT (optional, both procs) = how many tables the orchestrator dispatched; the
+--   gate FAILs if fewer reported. Omitted below, so only failures are checked.
 -- =============================================================================
 CALL ADM.SP_GATE_CHECK(P_PPN_ID => $PPN_ID);    -- inspect verdict + reason (no side effects)
 CALL ADM.SP_FINALIZE_RUN(P_PPN_ID => $PPN_ID);  -- gate -> GOLD(stub) -> close; raises if the run failed
+
+-- Completeness check in isolation: claim a count higher than what actually reported -> FAIL.
+CALL ADM.SP_GATE_CHECK(P_PPN_ID => $PPN_ID, P_EXPECTED_COUNT => 99);   -- TABLES_MISSING > 0, gate FAIL
 SELECT PPN_ID, STATUS, START_TS, END_TS FROM ADM.PPN WHERE PPN_ID = $PPN_ID;
 SELECT PHASE, STATUS, MESSAGE FROM ADM.PPN_LOG
  WHERE PPN_ID = $PPN_ID AND PHASE IN ('GATE_CHECK','REFRESH_GOLD','CLOSE_PPN') ORDER BY LOG_ID;
 
 -- Clean end-to-end PASS demo (fresh PPN, wrapped loads only):
 --   CALL ADM.SP_CREATE_PPN('test-run-003');
---   SET PPN3 = (SELECT "PPN_ID" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
+--   SET PPN3 = (SELECT $1:ppn_id::NUMBER FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
 --   CALL ADM.SP_RUN_TABLE_LOAD($PPN3, 'BSS_ORA', 'CUSTOMER');
 --   CALL ADM.SP_RUN_TABLE_LOAD($PPN3, 'BSS_ORA', 'SERVICE_PLAN');
---   CALL ADM.SP_FINALIZE_RUN($PPN3);   -- gate PASS -> GOLD stub -> close SUCCESS
+--   CALL ADM.SP_FINALIZE_RUN($PPN3, 2);  -- 2 tables dispatched; gate PASS -> GOLD stub -> close SUCCESS
 --   SELECT STATUS FROM ADM.PPN WHERE PPN_ID = $PPN3;  -- SUCCESS

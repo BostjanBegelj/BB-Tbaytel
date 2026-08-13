@@ -20,7 +20,7 @@ use schema adm;
 
 -- 1) Start the run
 CALL ADM.SP_CREATE_PPN('clean-e2e');
-SET PPN = (SELECT "PPN_ID" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
+SET PPN = (SELECT $1:ppn_id::NUMBER FROM TABLE(RESULT_SCAN(LAST_QUERY_ID())));
 SELECT $PPN AS PPN_ID;
 
 -- 2) Pre-flight config
@@ -45,7 +45,10 @@ CALL ADM.SP_RUN_TABLE_LOAD($PPN, 'WHOLESALE', 'WHOLESALE_USAGE');
 -- 4) (DQ would run here once AntFarm's SP_RUN_DQ_CHECKS exists)
 
 -- 5) Finalize: gate → GOLD (stub) → close. Returns SUCCESS, or raises if the run failed.
-CALL ADM.SP_FINALIZE_RUN($PPN);
+--    2nd argument = how many tables were dispatched above, so the gate can also prove that none
+--    went missing (PPN_PROCESS only holds tables that were actually invoked). ADF supplies
+--    @length(activity('LookupTables').output.value); omit it to check failures only.
+CALL ADM.SP_FINALIZE_RUN($PPN, 5);
 
 -- =============================================================================
 -- INSPECT — what a PASS looks like
@@ -77,9 +80,25 @@ SELECT SOURCE_ID, TABLE_NAME, STATUS, PHASE, ROWS_EXTRACTED, ROWS_MERGED, ROWS_D
 --   PPN_PROCESS.STATUS = ERROR. Set ETL_TABLES.ALLOW_EMPTY = TRUE only if empty is legitimate.
 --   SELECT TABLE_NAME, LOAD_TYPE, ALLOW_EMPTY FROM ADM.ETL_TABLES ORDER BY 1;
 
--- NOTE on completeness: PPN_PROCESS only contains tables that were actually invoked, so it
--- cannot by itself prove the run was complete. How (and whether) to enforce completeness before
--- GOLD is the open GOLD-gate decision — SP_GATE_CHECK is not wired into this flow yet.
+-- Gate verdict (SP_GATE_CHECK, called by SP_FINALIZE_RUN — blocks GOLD on FAIL):
+SELECT DETAIL_JSON:gate:gate::STRING            AS GATE,
+       DETAIL_JSON:gate:tables_reported::NUMBER AS REPORTED,
+       DETAIL_JSON:gate:tables_expected::NUMBER AS EXPECTED,
+       DETAIL_JSON:gate:tables_missing::NUMBER  AS MISSING,
+       DETAIL_JSON:gate:entries_not_ok::NUMBER  AS NOT_OK,
+       DETAIL_JSON:gate:reason::STRING          AS REASON
+  FROM ADM.PPN_LOG WHERE PPN_ID = $PPN AND PHASE = 'GATE_CHECK';
+
+-- Gate FAIL demo (both branches):
+--   a) a failed table blocks GOLD — the loaders never raise, so this is the ONLY thing that
+--      catches it. Force one table to ERROR (e.g. drop its stage files), then re-run finalize:
+--        expect GATE=FAIL, ENTRIES_NOT_OK=1, REASON naming the table, PPN.STATUS=ERROR,
+--        and NO GOLD refresh.
+--   b) a missing table blocks GOLD — dispatch only 4 of the 5 loads above but call
+--        CALL ADM.SP_FINALIZE_RUN($PPN, 5);
+--      expect GATE=FAIL, REPORTED=4, EXPECTED=5, MISSING=1.
+--      Passing 4 (or omitting the argument) would PASS — that is the point of the parameter:
+--      only the orchestrator knows how many tables tonight's schedule actually contains.
 
 -- Step log: the phase trail incl. GATE_CHECK, REFRESH_GOLD (stub), CLOSE_PPN (END)
 SELECT LOG_ID, PHASE, STATUS, TABLE_NAME, ROW_COUNT, MESSAGE

@@ -5,13 +5,22 @@
 --     and alerting fires (the run is already durably closed ERROR first).
 -- SP_CLOSE_PPN stays standalone: ADF calls it directly to close early aborts (e.g. validate fail)
 -- that never reach finalize.
+--
+-- P_EXPECTED_COUNT is passed straight through to the gate: the number of tables the orchestrator
+-- dispatched, so the gate can prove none went missing (ADF: @length(activity('LookupTables')
+-- .output.value)). Optional - leave it out and the gate checks failures only. See SP_GATE_CHECK.
 
 use role dev_sysadmin;
 use database dev_db;
 use schema adm;
 
+-- Signature changed (P_EXPECTED_COUNT added); drop the old 1-argument version so a single-argument
+-- CALL does not become ambiguous against the overload.
+DROP PROCEDURE IF EXISTS ADM.SP_FINALIZE_RUN(NUMBER);
+
 CREATE OR REPLACE PROCEDURE ADM.SP_FINALIZE_RUN(
-    "P_PPN_ID" NUMBER(38,0)
+    "P_PPN_ID"         NUMBER(38,0),
+    "P_EXPECTED_COUNT" NUMBER(38,0) DEFAULT NULL
 )
 RETURNS VARIANT
 LANGUAGE SQL
@@ -22,6 +31,7 @@ DECLARE
     e_failed EXCEPTION (-20270, 'SP_FINALIZE_RUN failed: run did not complete successfully.');
 
     v_ppn          NUMBER  DEFAULT P_PPN_ID;
+    v_expected     NUMBER  DEFAULT P_EXPECTED_COUNT;
     v_gate         VARIANT;
     v_gold         VARIANT;
     v_close        VARIANT;
@@ -41,7 +51,7 @@ BEGIN
 
     /* 1. GATE ----------------------------------------------------------- */
     v_phase := 'GATE';
-    CALL ADM.SP_GATE_CHECK(P_PPN_ID => :v_ppn) INTO :v_gate;
+    CALL ADM.SP_GATE_CHECK(P_PPN_ID => :v_ppn, P_EXPECTED_COUNT => :v_expected) INTO :v_gate;
     v_gate_verdict := UPPER(COALESCE(GET(v_gate, 'gate')::STRING, 'FAIL'));
     v_reason       := COALESCE(GET(v_gate, 'reason')::STRING, '');
 

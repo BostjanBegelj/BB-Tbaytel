@@ -4,15 +4,20 @@
 -- It therefore records WHAT ACTUALLY RAN in a given PPN. The set of tables in a run is decided by
 -- the schedule/orchestrator and may legitimately be a SUBSET of ETL_TABLES.
 --
--- Current consumers: per-table status/counts for monitoring and troubleshooting, and rerun
--- decisions (a table left RUNNING or ERROR is the one to re-drive).
+-- Consumers:
+--   * the PRE-GOLD GATE (SP_GATE_CHECK, called by SP_FINALIZE_RUN): GOLD is refreshed only if
+--     every row for the PPN is SUCCESS or SKIP. This is what makes a table failure matter -
+--     SP_RUN_TABLE_LOAD does not raise, it just records ERROR here.
+--   * per-table status/counts for monitoring and troubleshooting.
+--   * rerun decisions (a table left RUNNING or ERROR is the one to re-drive).
 --
--- POSSIBLE FUTURE USE - pre-GOLD gate (decision still open, see SP_GATE_CHECK, not wired in):
--- a run-level check could require every row for the PPN to be SUCCESS or SKIP before refreshing
--- GOLD, and could read a DQ verdict recorded here as a run-level row. IMPORTANT PRECONDITION:
--- a table the orchestrator never invoked leaves NO row here, so completeness cannot be proven
--- from this table alone - such a check also needs the run's INTENDED table list (from the
--- schedule, or from a plan frozen at run start).
+-- COMPLETENESS CAVEAT: a table the orchestrator never invoked leaves NO row here, so this table
+-- alone proves "nothing that ran failed", not "everything ran". The orchestrator therefore passes
+-- its dispatched-table COUNT to SP_FINALIZE_RUN, which fails the gate when fewer tables reported.
+--
+-- RESERVED SOURCE_ID '_RUN_': run-level verdicts rather than tables - e.g. the future DQ result
+-- (SOURCE_ID='_RUN_', TABLE_NAME='_DQ_'). Counts towards the gate's failure test but not towards
+-- its table counts.
 -- Deploy order: create AFTER PPN (FK target).
 
 use role dev_sysadmin;
