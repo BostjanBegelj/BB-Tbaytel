@@ -11,6 +11,15 @@
 --                 so deletes cannot be inferred. The watermark only bounds EXTRACTION (landing).
 --   PARTITION   : same MERGE, but soft-delete is scoped to only the PARTITION_COLUMN
 --                 values present in this load (untouched partitions are left alone).
+--
+-- DUPLICATE BUSINESS KEYS = SOURCE DEFECT, NOT A WAREHOUSE PROBLEM.
+-- When PK_COLUMNS is configured and BRONZE contains more than one row per key, this procedure
+-- FAILS the table and writes nothing. It does not de-duplicate: choosing a winner would silently
+-- discard source data and mask the defect. The fix belongs at source, followed by a re-extract.
+-- (This cannot be left to the DQ phase, which runs after SILVER: MERGE itself rejects two source
+-- rows matching one target row, and unchecked it would insert duplicate NEW keys silently on the
+-- first load and only fail on the next.)
+--
 -- Config-driven; same helpers + child-error pattern. RUN_ID resolved by SP_LOG_STEP.
 -- Writes PPN_LOG only; PPN_PROCESS state is owned by SP_RUN_TABLE_LOAD.
 
@@ -42,6 +51,9 @@ DECLARE
     v_scope         STRING  DEFAULT '';
     v_sync          VARIANT;
     v_silver_existed NUMBER DEFAULT 0;
+    v_dup_keys      NUMBER DEFAULT 0;
+    v_dup_rows      NUMBER DEFAULT 0;
+    v_dup_sample    STRING;
     v_txn_open      BOOLEAN DEFAULT FALSE;
     v_db            STRING  DEFAULT UPPER(CURRENT_DATABASE());
     v_bronze_fq   STRING;
@@ -52,6 +64,7 @@ DECLARE
     v_update_set  STRING;   -- tgt."A" = src."A", ...
     v_row_hk      STRING;
     v_pk_hk       STRING;
+    v_pk_hk_b     STRING;   -- same expression, columns qualified with the b. alias
     v_src_select  STRING;
     v_col_count   NUMBER  DEFAULT 0;
 
@@ -126,19 +139,66 @@ BEGIN
     v_row_hk := 'MD5(TO_JSON(ARRAY_CONSTRUCT(' || v_cols || ')))';
 
     IF (v_pk_columns IS NOT NULL AND TRIM(v_pk_columns) <> '') THEN
+        -- two forms of the same expression: bare (for use against one table) and b.-qualified
+        -- (for the correlated soft-delete subquery, where the PK columns exist on both sides)
         SELECT 'MD5(TO_JSON(ARRAY_CONSTRUCT(' ||
-                 LISTAGG('"' || TRIM(VALUE) || '"', ', ') WITHIN GROUP (ORDER BY INDEX) || ')))'
-          INTO :v_pk_hk
+                 LISTAGG('"' || TRIM(VALUE) || '"', ', ') WITHIN GROUP (ORDER BY INDEX) || ')))',
+               'MD5(TO_JSON(ARRAY_CONSTRUCT(' ||
+                 LISTAGG('b."' || TRIM(VALUE) || '"', ', ') WITHIN GROUP (ORDER BY INDEX) || ')))'
+          INTO :v_pk_hk, :v_pk_hk_b
           FROM TABLE(SPLIT_TO_TABLE(:v_pk_columns, ','));
     ELSE
         v_pk_hk := v_row_hk;   -- no PK: whole-row identity
+        SELECT 'MD5(TO_JSON(ARRAY_CONSTRUCT(' ||
+                 LISTAGG('b."' || COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY ORDINAL_POSITION) || ')))'
+          INTO :v_pk_hk_b
+          FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = :v_src_sch AND TABLE_NAME = :v_table
+           AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'SRC_FILE_NAME');
     END IF;
 
-    -- deduplicated source snapshot (one row per PK_HK)
+    -- Source snapshot for the MERGE. NO de-duplication: the warehouse must not silently pick a
+    -- winner or discard source rows. Duplicate business keys are a SOURCE defect - they are
+    -- detected below and the table is failed so they get fixed at source and re-extracted.
     v_src_select :=
         'SELECT ' || v_cols || ', ' || v_pk_hk || ' AS PK_HK, ' || v_row_hk || ' AS ROW_HK, PPN_ID, PPN_TIMESTAMP ' ||
-        'FROM ' || v_bronze_fq || ' WHERE PPN_ID = ' || v_ppn_id ||
-        ' QUALIFY ROW_NUMBER() OVER (PARTITION BY ' || v_pk_hk || ' ORDER BY 1) = 1';
+        'FROM ' || v_bronze_fq || ' WHERE PPN_ID = ' || v_ppn_id;
+
+    /* 3b. DUPLICATE BUSINESS KEY CHECK (only when PK_COLUMNS is configured) --------------
+          Policy: the warehouse never resolves a source data defect. Duplicate business keys are
+          fixed AT SOURCE and re-extracted (change management), so this fails the table instead of
+          picking a winner. Silver stays a faithful mirror of a correct source.
+
+          It also cannot be deferred to the DQ phase: Snowflake's MERGE raises "Duplicate row
+          detected during DML action" when two source rows match one target row, and without this
+          check the behaviour would be inconsistent - duplicates whose keys are NEW would insert
+          silently on the first load and only start failing on the next run.
+
+          Not applied when PK_COLUMNS is empty: then PK_HK = ROW_HK, so a "duplicate" means two
+          fully identical rows, which is usually legitimate (e.g. repeated fact rows) and simply
+          collapses in the MERGE.                                                              */
+    IF (v_pk_columns IS NOT NULL AND TRIM(v_pk_columns) <> '') THEN
+        v_phase := 'CHECK_DUPLICATE_PK';
+        v_sql := 'SELECT COUNT(*), SUM(c), LISTAGG(k, '' | '') WITHIN GROUP (ORDER BY c DESC) FROM ('
+              || 'SELECT ' || v_pk_hk || ' AS h, COUNT(*) AS c, ANY_VALUE(TO_JSON(ARRAY_CONSTRUCT('
+              || (SELECT LISTAGG('"' || TRIM(VALUE) || '"', ', ') WITHIN GROUP (ORDER BY INDEX)
+                    FROM TABLE(SPLIT_TO_TABLE(:v_pk_columns, ','))) || '))) AS k '
+              || 'FROM ' || v_bronze_fq || ' WHERE PPN_ID = ' || v_ppn_id
+              || ' GROUP BY 1 HAVING COUNT(*) > 1 LIMIT 10)';
+        v_last_sql := v_sql;
+        EXECUTE IMMEDIATE v_sql;
+        SELECT $1, $2, $3 INTO :v_dup_keys, :v_dup_rows, :v_dup_sample
+          FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+
+        IF (v_dup_keys > 0) THEN
+            v_error_msg := 'Duplicate business key(s) in ' || v_bronze_fq || ' on PK_COLUMNS ['
+                        || v_pk_columns || ']: ' || v_dup_keys || ' key(s) covering ' || v_dup_rows
+                        || ' row(s). Nothing was written to SILVER. Fix the data at source and '
+                        || 're-extract (the warehouse does not choose between duplicate rows). '
+                        || 'Sample key(s): ' || COALESCE(v_dup_sample, '(n/a)');
+            RAISE e_failed;
+        END IF;
+    END IF;
 
     /* 4. ENSURE SILVER TABLE EXISTS (structure) -------------------------
           DDL — must run OUTSIDE the transaction below.
@@ -228,12 +288,16 @@ BEGIN
         v_phase := 'SOFT_DELETE';
         -- PARTITION: restrict the delete sweep to the partitions present in this load.
         IF (v_load_type = 'PARTITION') THEN
-            v_scope := 'AND "' || v_partition_col || '" IN (SELECT DISTINCT "' || v_partition_col ||
-                       '" FROM ' || v_bronze_fq || ' WHERE PPN_ID = ' || v_ppn_id || ') ';
+            v_scope := 'AND tgt."' || v_partition_col || '" IN (SELECT DISTINCT p."' || v_partition_col ||
+                       '" FROM ' || v_bronze_fq || ' p WHERE p.PPN_ID = ' || v_ppn_id || ') ';
         END IF;
-        v_sql := 'UPDATE ' || v_silver_fq || ' SET IS_DELETED = TRUE, DW_UPDATED_AT = CURRENT_TIMESTAMP() ' ||
-                 'WHERE IS_DELETED = FALSE ' || v_scope ||
-                 'AND PK_HK NOT IN (SELECT ' || v_pk_hk || ' FROM ' || v_bronze_fq || ' WHERE PPN_ID = ' || v_ppn_id || ')';
+        -- NOT EXISTS rather than NOT IN: if the subquery ever yielded a NULL, NOT IN would
+        -- evaluate to UNKNOWN for every row and silently soft-delete NOTHING. NOT EXISTS is
+        -- immune to that by construction.
+        v_sql := 'UPDATE ' || v_silver_fq || ' tgt SET IS_DELETED = TRUE, DW_UPDATED_AT = CURRENT_TIMESTAMP() ' ||
+                 'WHERE tgt.IS_DELETED = FALSE ' || v_scope ||
+                 'AND NOT EXISTS (SELECT 1 FROM ' || v_bronze_fq || ' b ' ||
+                                 'WHERE b.PPN_ID = ' || v_ppn_id || ' AND ' || v_pk_hk_b || ' = tgt.PK_HK)';
         v_last_sql := v_sql;
         EXECUTE IMMEDIATE v_sql;
         v_deleted := SQLROWCOUNT;
