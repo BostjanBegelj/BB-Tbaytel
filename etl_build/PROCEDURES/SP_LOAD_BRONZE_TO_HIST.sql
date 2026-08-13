@@ -1,7 +1,12 @@
 -- ADM.SP_LOAD_BRONZE_TO_HIST - append the current BRONZE data for this PPN into
--- BRONZE_HIST (the immutable per-load history / lineage). Idempotent per PPN:
--- rows for the PPN are deleted before insert, so re-running a PPN never duplicates.
--- Source-type agnostic (works for Parquet- and share-landed tables alike).
+-- BRONZE_HIST (the per-load history / lineage layer).
+--
+-- Immutability, precisely: rows of COMPLETED PPNs are never touched again - that is what makes
+-- history auditable. Within the CURRENT PPN the rows ARE replaced (delete-then-insert), which is
+-- what makes a rerun idempotent rather than duplicating. So "append-only across PPNs, replaceable
+-- within the PPN being processed".
+--
+-- Source-type agnostic (works for file- and database-landed tables alike).
 -- Writes PPN_LOG only; PPN_PROCESS state is owned by SP_RUN_TABLE_LOAD.
 -- History schema is derived as <TARGET_SCHEMA>_HIST (BRONZE -> BRONZE_HIST).
 -- RUN_ID is resolved from ADM.PPN by SP_LOG_STEP, so it is not a parameter here.
@@ -37,6 +42,7 @@ DECLARE
     v_txn_open    BOOLEAN DEFAULT FALSE;
 
     v_cfg_count   NUMBER  DEFAULT 0;
+    v_ppn_count   NUMBER  DEFAULT 0;
     v_row_count   NUMBER  DEFAULT 0;
     v_started_at  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP();
     v_phase       STRING  DEFAULT 'INIT';
@@ -68,6 +74,16 @@ BEGIN
     IF (v_cfg_count <> 1) THEN
         v_error_msg := 'Expected exactly 1 active config row for [' || v_source_id || '.' || v_table
                     || '] at HIST time, found ' || v_cfg_count || ' (config changed mid-run?).';
+        RAISE e_failed;
+    END IF;
+
+    /* PPN must exist: with a bogus PPN_ID the DELETE and INSERT below both match nothing and this
+       would report SUCCESS with 0 rows appended - silently useless. Only reachable on a standalone
+       or replay call; via SP_RUN_TABLE_LOAD the PPN always exists. */
+    v_phase := 'GET_PPN';
+    SELECT COUNT(*) INTO :v_ppn_count FROM ADM.PPN WHERE PPN_ID = :v_ppn_id;
+    IF (v_ppn_count <> 1) THEN
+        v_error_msg := 'PPN_ID [' || TO_VARCHAR(v_ppn_id) || '] not found in ADM.PPN (call SP_CREATE_PPN first).';
         RAISE e_failed;
     END IF;
 
