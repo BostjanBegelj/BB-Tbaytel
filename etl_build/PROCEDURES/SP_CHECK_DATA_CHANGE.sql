@@ -1,7 +1,7 @@
 -- ADM.SP_CHECK_DATA_CHANGE - decide whether this PPN's BRONZE load is IDENTICAL to the
 -- last snapshot already in BRONZE_HIST, so the caller can skip HIST append + SILVER.
 -- Comparison = row COUNT + order-independent content HASH_AGG over BUSINESS columns only
--- (excludes PPN_ID, PPN_TIMESTAMP, METADATA$FILENAME, which change every load).
+-- (excludes the technical columns PPN_ID, PPN_TIMESTAMP, SRC_FILE_NAME, which change every load).
 -- Returns a status VARIANT (child pattern); writes PPN_LOG only - PPN_PROCESS state is owned
 -- by SP_RUN_TABLE_LOAD. Does NOT itself skip anything: the caller reads is_identical.
 --
@@ -137,21 +137,21 @@ BEGIN
           INTO :v_cols
           FROM INFORMATION_SCHEMA.COLUMNS
          WHERE TABLE_SCHEMA = :v_src_sch AND TABLE_NAME = :v_table
-           AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'METADATA$FILENAME');
+           AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'SRC_FILE_NAME');
 
         -- name sets, order-independent, for a structural comparison
         SELECT LISTAGG(COLUMN_NAME, ',') WITHIN GROUP (ORDER BY COLUMN_NAME)
           INTO :v_cols_hist
           FROM INFORMATION_SCHEMA.COLUMNS
          WHERE TABLE_SCHEMA = :v_hist_sch AND TABLE_NAME = :v_table
-           AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'METADATA$FILENAME');
+           AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'SRC_FILE_NAME');
 
         LET v_cols_bronze STRING;
         SELECT LISTAGG(COLUMN_NAME, ',') WITHIN GROUP (ORDER BY COLUMN_NAME)
           INTO :v_cols_bronze
           FROM INFORMATION_SCHEMA.COLUMNS
          WHERE TABLE_SCHEMA = :v_src_sch AND TABLE_NAME = :v_table
-           AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'METADATA$FILENAME');
+           AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'SRC_FILE_NAME');
 
         IF (NOT EQUAL_NULL(v_cols_bronze, v_cols_hist)) THEN
             /* --- 3. structural change: do NOT hash (HIST not synced yet) */

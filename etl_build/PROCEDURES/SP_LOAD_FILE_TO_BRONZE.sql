@@ -131,10 +131,14 @@ BEGIN
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
-    /* 5. ADD LINEAGE COLUMNS ------------------------------------------- */
+    /* 5. ADD LINEAGE COLUMNS -------------------------------------------
+          SRC_FILE_NAME is OUR column; it is populated from Snowflake's staged-file
+          pseudo-column METADATA$FILENAME by the COPY below (INCLUDE_METADATA maps
+          target_column = pseudo_column). That metadata is format-agnostic - it works
+          for CSV/JSON/Avro/Parquet alike - so this is not Parquet-specific.        */
     v_phase := 'ADD_METADATA';
     v_sql := 'ALTER TABLE ' || v_target_fq || ' ADD COLUMN IF NOT EXISTS ' ||
-             'METADATA$FILENAME STRING, PPN_ID NUMBER(38,0), PPN_TIMESTAMP TIMESTAMP_NTZ(9)';
+             'SRC_FILE_NAME STRING, PPN_ID NUMBER(38,0), PPN_TIMESTAMP TIMESTAMP_NTZ(9)';
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
@@ -145,7 +149,7 @@ BEGIN
         PATTERN = ''' || v_pattern_esc || '''
         FILE_FORMAT = (FORMAT_NAME = ' || v_format || ')
         MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
-        INCLUDE_METADATA = (METADATA$FILENAME = METADATA$FILENAME)
+        INCLUDE_METADATA = (SRC_FILE_NAME = METADATA$FILENAME)
         ON_ERROR = ABORT_STATEMENT';
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;

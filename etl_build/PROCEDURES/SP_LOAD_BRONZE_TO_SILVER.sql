@@ -2,7 +2,7 @@
 -- 1:1 SILVER.<table>, computing PK_HK + ROW_HK and applying IS_DELETED.
 --   PK_HK  = MD5 of PK_COLUMNS  (or of ALL business cols when no PK is defined).
 --   ROW_HK = MD5 of ALL business cols (change fingerprint / hashdiff).
---   Business cols = every BRONZE column except PPN_ID, PPN_TIMESTAMP, METADATA$FILENAME.
+--   Business cols = every BRONZE column except the technical ones: PPN_ID, PPN_TIMESTAMP, SRC_FILE_NAME.
 -- LOAD_TYPE:
 --   FULL / INIT : MERGE (insert new, update where ROW_HK differs, un-delete on reappear),
 --                 then soft-delete SILVER keys absent from the snapshot (IS_DELETED=TRUE).
@@ -41,6 +41,7 @@ DECLARE
     v_partition_col STRING;
     v_scope         STRING  DEFAULT '';
     v_sync          VARIANT;
+    v_silver_existed NUMBER DEFAULT 0;
     v_txn_open      BOOLEAN DEFAULT FALSE;
     v_db            STRING  DEFAULT UPPER(CURRENT_DATABASE());
     v_bronze_fq   STRING;
@@ -110,7 +111,7 @@ BEGIN
       FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = :v_src_sch
        AND TABLE_NAME = :v_table
-       AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'METADATA$FILENAME');
+       AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'SRC_FILE_NAME');
 
     IF (v_col_count = 0) THEN
         v_error_msg := 'BRONZE table ' || v_bronze_fq || ' has no business columns (load BRONZE first).';
@@ -139,9 +140,18 @@ BEGIN
         'FROM ' || v_bronze_fq || ' WHERE PPN_ID = ' || v_ppn_id ||
         ' QUALIFY ROW_NUMBER() OVER (PARTITION BY ' || v_pk_hk || ' ORDER BY 1) = 1';
 
-    /* 4. ENSURE SILVER TABLE EXISTS (structure) ------------------------- */
-    /*    DDL — must run OUTSIDE the transaction below.                    */
+    /* 4. ENSURE SILVER TABLE EXISTS (structure) -------------------------
+          DDL — must run OUTSIDE the transaction below.
+          The SILVER table cannot be created by SP_SYNC_TABLE_STRUCTURE (a LIKE of BRONZE would
+          miss PK_HK / ROW_HK / IS_DELETED / DW_* ), so it is created here. Note existence FIRST,
+          so a first-time creation still produces a structure-change log row - otherwise the sync
+          below would find the table already present, report NOCHANGE, and the creation would go
+          unlogged (BRONZE_HIST creation is logged because sync itself creates it).            */
     v_phase := 'CREATE_SILVER';
+    SELECT COUNT(*) INTO :v_silver_existed
+      FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = 'SILVER' AND TABLE_NAME = :v_table;
+
     v_sql := 'CREATE TABLE IF NOT EXISTS ' || v_silver_fq || ' AS SELECT ' || v_cols || ', ' ||
              v_pk_hk || ' AS PK_HK, ' || v_row_hk || ' AS ROW_HK, FALSE AS IS_DELETED, ' ||
              'PPN_ID, PPN_TIMESTAMP, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ(9) AS DW_INSERTED_AT, ' ||
@@ -149,11 +159,29 @@ BEGIN
     v_last_sql := v_sql;
     EXECUTE IMMEDIATE v_sql;
 
+    -- log the creation (same PHASE as sync-driven changes, so one query finds them all)
+    IF (v_silver_existed = 0) THEN
+        CALL ADM.SP_LOG_STEP(
+            P_PPN_ID        => :v_ppn_id,
+            P_PHASE         => 'SYNC_SILVER',
+            P_STATUS        => 'SUCCESS',
+            P_SOURCE_ID     => :v_source_id,
+            P_TABLE_NAME    => :v_table,
+            P_TARGET_OBJECT => :v_silver_fq,
+            P_MESSAGE       => 'STRUCTURE CREATED on SILVER.' || :v_table || '.',
+            P_DETAIL_JSON   => OBJECT_CONSTRUCT(
+                'context', OBJECT_CONSTRUCT('procedure','SP_LOAD_BRONZE_TO_SILVER','ppn_id',:v_ppn_id),
+                'sync', OBJECT_CONSTRUCT('action','CREATED','table',:v_silver_fq,
+                                         'note','created from BRONZE + PK_HK/ROW_HK/IS_DELETED/DW_* columns')
+            )
+        ) INTO :v_log_rows;
+    END IF;
+
     /* 4b. RECONCILE SILVER STRUCTURE TO BRONZE business cols ------------ */
     v_phase := 'SYNC_SILVER';
     CALL ADM.SP_SYNC_TABLE_STRUCTURE(
         P_SOURCE_SCHEMA => :v_src_sch, P_TARGET_SCHEMA => 'SILVER',
-        P_TABLE_NAME => :v_table, P_EXCLUDE_CSV => 'METADATA$FILENAME') INTO :v_sync;
+        P_TABLE_NAME => :v_table, P_EXCLUDE_COLUMNS => 'SRC_FILE_NAME') INTO :v_sync;
     IF (GET(:v_sync, 'status')::STRING <> 'SUCCESS') THEN
         v_error_msg := 'Structure sync failed: ' || COALESCE(GET(:v_sync, 'message')::STRING, '(no message)');
         RAISE e_failed;
