@@ -12,11 +12,14 @@
 --                      leave HIST/SILVER inconsistent with this PPN's input. HIST (delete+
 --                      insert per PPN) and SILVER (MERGE) are idempotent, so reprocessing is safe.
 --   2. NO_PREVIOUS   - no history table / no earlier PPN to compare with => proceed.
---   3. SCHEMA_CHANGED- BRONZE vs BRONZE_HIST business column sets differ (e.g. the source added
---                      a column). Hashing here would fail, because the HIST table has not been
---                      structure-synced yet (SP_SYNC_TABLE_STRUCTURE runs later, inside
+--   3. SCHEMA_CHANGED- BRONZE has a business column that BRONZE_HIST does NOT (source added a
+--                      column). Hashing here would fail, because HIST has not been structure-
+--                      synced yet (SP_SYNC_TABLE_STRUCTURE runs later, inside
 --                      SP_LOAD_BRONZE_TO_HIST). A structural change IS a change, so report
 --                      DIFFERENT and let HIST/SILVER sync then load.
+--                      NOTE: columns present in HIST but no longer in BRONZE (source dropped
+--                      them; sync keeps target-only columns) are IGNORED - they are expected and
+--                      must not be treated as drift, or skip-detection would break permanently.
 --   4. IDENTICAL / DIFFERENT - count + HASH_AGG comparison against the previous snapshot.
 
 use role dev_sysadmin;
@@ -45,8 +48,8 @@ DECLARE
     v_db          STRING  DEFAULT UPPER(CURRENT_DATABASE());
     v_bronze_fq   STRING;
     v_hist_fq     STRING;
-    v_cols        STRING;
-    v_cols_hist   STRING;
+    v_cols            STRING;
+    v_missing_in_hist NUMBER DEFAULT 0;
 
     v_cfg_count   NUMBER  DEFAULT 0;
     v_hist_exists NUMBER  DEFAULT 0;
@@ -103,7 +106,16 @@ BEGIN
       FROM INFORMATION_SCHEMA.TABLES
      WHERE TABLE_SCHEMA = :v_hist_sch AND TABLE_NAME = :v_table;
 
+    -- Current BRONZE row count for this PPN, taken ONCE so every decision path can report it
+    -- honestly (otherwise the non-comparing paths would log ROW_COUNT = 0, which reads as
+    -- "nothing landed" when the count simply was not taken).
+    v_phase := 'COUNT_BRONZE';
+    v_sql := 'SELECT COUNT(*) FROM ' || v_bronze_fq || ' WHERE PPN_ID = ' || v_ppn_id;
+    EXECUTE IMMEDIATE v_sql;
+    SELECT $1 INTO :v_new_cnt FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+
     IF (v_hist_exists > 0) THEN
+        v_phase := 'CHECK_HIST_ROWS';
         -- rows already written for THIS PPN? (i.e. this is a rerun)
         v_sql := 'SELECT COUNT(*) FROM ' || v_hist_fq || ' WHERE PPN_ID = ' || v_ppn_id;
         EXECUTE IMMEDIATE v_sql;
@@ -131,41 +143,40 @@ BEGIN
         v_msg := 'SUCCESS: no previous BRONZE_HIST snapshot; treated as changed (proceed).';
 
     ELSE
-        /* --- business column sets (both sides) ------------------------ */
+        /* --- business columns + structural comparison ------------------
+           ONE query: the quoted ordinal-ordered list used for HASH_AGG, plus a count of BRONZE
+           columns MISSING from BRONZE_HIST.
+
+           Deliberately NOT a set-equality test. SP_SYNC_TABLE_STRUCTURE leaves target-only
+           columns in place, so once a column disappears from the source, HIST keeps it forever -
+           set equality would then report SCHEMA_CHANGED on EVERY subsequent run, permanently
+           disabling skip-detection for that table and filling the log with phantom drift.
+           Only "BRONZE has a column HIST lacks" actually requires a sync before hashing.       */
         v_phase := 'BUILD_COLS';
-        SELECT LISTAGG('"' || COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY ORDINAL_POSITION)
-          INTO :v_cols
-          FROM INFORMATION_SCHEMA.COLUMNS
-         WHERE TABLE_SCHEMA = :v_src_sch AND TABLE_NAME = :v_table
-           AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'SRC_FILE_NAME');
+        SELECT LISTAGG('"' || b.COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY b.ORDINAL_POSITION),
+               COUNT_IF(NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS h
+                                     WHERE h.TABLE_SCHEMA = :v_hist_sch
+                                       AND h.TABLE_NAME   = :v_table
+                                       AND h.COLUMN_NAME  = b.COLUMN_NAME))
+          INTO :v_cols, :v_missing_in_hist
+          FROM INFORMATION_SCHEMA.COLUMNS b
+         WHERE b.TABLE_SCHEMA = :v_src_sch AND b.TABLE_NAME = :v_table
+           AND b.COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'SRC_FILE_NAME');
 
-        -- name sets, order-independent, for a structural comparison
-        SELECT LISTAGG(COLUMN_NAME, ',') WITHIN GROUP (ORDER BY COLUMN_NAME)
-          INTO :v_cols_hist
-          FROM INFORMATION_SCHEMA.COLUMNS
-         WHERE TABLE_SCHEMA = :v_hist_sch AND TABLE_NAME = :v_table
-           AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'SRC_FILE_NAME');
-
-        LET v_cols_bronze STRING;
-        SELECT LISTAGG(COLUMN_NAME, ',') WITHIN GROUP (ORDER BY COLUMN_NAME)
-          INTO :v_cols_bronze
-          FROM INFORMATION_SCHEMA.COLUMNS
-         WHERE TABLE_SCHEMA = :v_src_sch AND TABLE_NAME = :v_table
-           AND COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'SRC_FILE_NAME');
-
-        IF (NOT EQUAL_NULL(v_cols_bronze, v_cols_hist)) THEN
+        IF (v_missing_in_hist > 0) THEN
             /* --- 3. structural change: do NOT hash (HIST not synced yet) */
             v_action     := 'SCHEMA_CHANGED';
             v_identical  := FALSE;
             v_log_status := 'SUCCESS';
-            v_msg := 'SUCCESS: BRONZE and BRONZE_HIST column sets differ (schema drift); ' ||
-                     'treated as changed so HIST/SILVER structure-sync then load.';
+            v_msg := 'SUCCESS: BRONZE has ' || v_missing_in_hist || ' column(s) not yet in BRONZE_HIST '
+                  || '(schema drift); treated as changed so HIST/SILVER structure-sync then load.';
         ELSE
             /* --- 4. content comparison ------------------------------- */
             v_phase := 'COMPARE';
-            v_sql := 'SELECT COUNT(*), HASH_AGG(' || v_cols || ') FROM ' || v_bronze_fq || ' WHERE PPN_ID = ' || v_ppn_id;
+            -- row count already taken above; only the content hash is needed here
+            v_sql := 'SELECT HASH_AGG(' || v_cols || ') FROM ' || v_bronze_fq || ' WHERE PPN_ID = ' || v_ppn_id;
             EXECUTE IMMEDIATE v_sql;
-            SELECT $1, $2 INTO :v_new_cnt, :v_new_hash FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+            SELECT $1 INTO :v_new_hash FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
 
             v_sql := 'SELECT COUNT(*), HASH_AGG(' || v_cols || ') FROM ' || v_hist_fq || ' WHERE PPN_ID = ' || v_prev_ppn;
             EXECUTE IMMEDIATE v_sql;
