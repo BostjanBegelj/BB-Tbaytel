@@ -231,19 +231,5 @@ GRANT USAGE ON SCHEMA   PLATFORM_DB.DEPLOYMENT TO ROLE IDENTIFIER($R_DEPLOYER);
 -- VALIDATION
 -- ============================================================
 -- Expect 20 roles and 20 warehouses for this environment.
---
--- SHOW ... LIKE only accepts a literal string - not a session variable
--- and not a concatenation. Filter the result set instead. Each pair
--- must be run together: RESULT_SCAN reads the statement immediately
--- before it.
-SHOW ROLES;
-SELECT "name", "comment"
-FROM   TABLE(RESULT_SCAN(LAST_QUERY_ID()))
-WHERE  "name" LIKE $ENV_ABBR || '%'
-ORDER  BY "name";
-
-SHOW WAREHOUSES;
-SELECT "name", "size", "state", "auto_suspend"
-FROM   TABLE(RESULT_SCAN(LAST_QUERY_ID()))
-WHERE  "name" LIKE $ENV_ABBR || '%'
-ORDER  BY "name";
+SHOW ROLES LIKE $ENV_ABBR || '%';
+SHOW WAREHOUSES LIKE $ENV_ABBR || '%';
