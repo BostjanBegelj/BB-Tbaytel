@@ -230,6 +230,10 @@ GRANT USAGE ON SCHEMA   PLATFORM_DB.DEPLOYMENT TO ROLE IDENTIFIER($R_DEPLOYER);
 -- ============================================================
 -- VALIDATION
 -- ============================================================
--- Expect 20 roles and 20 warehouses for this environment.
-SHOW ROLES LIKE $ENV_ABBR || '%';
-SHOW WAREHOUSES LIKE $ENV_ABBR || '%';
+
+-- Filter Roles
+SELECT "NAME", "COMMENT", "CREATED_ON"
+FROM SNOWFLAKE.ACCOUNT_USAGE.ROLES
+WHERE "NAME" LIKE $ENV_ABBR || '%'
+  AND "DELETED_ON" IS NULL;
+
