@@ -231,5 +231,18 @@ GRANT USAGE ON SCHEMA   PLATFORM_DB.DEPLOYMENT TO ROLE IDENTIFIER($R_DEPLOYER);
 -- VALIDATION
 -- ============================================================
 -- Expect 20 roles and 20 warehouses for this environment.
-SHOW ROLES LIKE $ENV_ABBR || '%';
-SHOW WAREHOUSES LIKE $ENV_ABBR || '%';
+--
+-- SHOW ... LIKE only accepts a literal string - not a variable or a
+-- concatenation. Filter the result set instead. Run each SHOW with its
+-- SELECT together: RESULT_SCAN reads the statement immediately before.
+SHOW ROLES;
+SELECT "name"
+FROM   TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE  "name" LIKE $ENV_ABBR || '%'
+ORDER  BY "name";
+
+SHOW WAREHOUSES;
+SELECT "name", "size", "state"
+FROM   TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE  "name" LIKE $ENV_ABBR || '%'
+ORDER  BY "name";
