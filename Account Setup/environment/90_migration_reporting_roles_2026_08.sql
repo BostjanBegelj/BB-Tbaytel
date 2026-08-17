@@ -22,7 +22,7 @@
 -- Idempotent: CREATE ... IF NOT EXISTS, DROP ... IF EXISTS, and the
 -- ALTER USER statements are absolute rather than incremental.
 -- ============================================================
-SET ENV_ABBR = 'DEV_';                 -- DEV_ | TEST_ | PROD_
+SET ENV_ABBR = 'TEST_';                 -- DEV_ | TEST_ | PROD_
 
 SET DB_NAME       = $ENV_ABBR || 'DB';
 SET ENV_SYSADMIN  = $ENV_ABBR || 'SYSADMIN';
