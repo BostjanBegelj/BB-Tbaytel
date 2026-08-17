@@ -28,6 +28,12 @@
 --   (SOURCE_ID='_RUN_', TABLE_NAME='_DQ_') written by SP_RUN_DQ_CHECKS - SUCCESS/SKIP to pass,
 --   ERROR to block GOLD. Such rows count towards the failure test (one uniform rule) but NOT
 --   towards the table counts, so the P_EXPECTED_COUNT comparison stays apples-to-apples.
+--
+-- PLANNED (next iteration): this procedure will CALL the antFarm DQ service itself and report the
+--   DQ result in its own returned object, rather than the orchestrator calling SP_RUN_DQ_CHECKS
+--   separately and the gate merely reading the '_RUN_'/'_DQ_' row. Two things to settle when doing
+--   it: the gate stops being a pure read with no side effects, and it becomes both the invoker and
+--   the judge of DQ. Treat the '_RUN_' convention above as provisional until then.
 
 use role dev_sysadmin;
 use database dev_db;

@@ -19,12 +19,13 @@
 --        Role:      <ENV>_DEPLOYER   (FULL on env schemas; reads git repos)
 --        Warehouse: <ENV>_DEPLOYER_WH
 --
--- Note: the general <ENV>_REPORTER role is used by this Power BI
--- SERVICE user (broad read across GOLD + GOLD_*). The per-domain
--- <ENV>_REPORTER_BILLING / _FINANCE / _MARKETING roles are for
--- ACTUAL people connecting via Power BI DirectQuery with SSO, and
--- are provisioned to those users through Entra group mapping - not
--- created as service users here.
+-- Note on the reporting roles:
+--   <ENV>_POWERBI            this SERVICE user. Broad read across GOLD
+--                            and every GOLD_{domain} mart.
+--   <ENV>_REPORTER           HUMAN role, shared GOLD schema only.
+--   <ENV>_REPORTER_{domain}  HUMAN roles, one GOLD_{domain} mart each.
+-- The human roles reach people through Entra groups granted to them -
+-- they are never service users and are not created here.
 --
 -- All service users: TYPE = SERVICE, key-pair auth only, no
 -- password. Prerequisite: functional roles + warehouses (step 02).
@@ -39,10 +40,13 @@ SET SVC_ADF_USER  = 'SVC_' || $ENV_ABBR || 'ADF';
 SET ADF_ROLE      = $ENV_ABBR || 'DATA_LOADER';
 SET ADF_WAREHOUSE = $ENV_ABBR || 'DATA_LOADER_WH';
 
--- Power BI (reporting service account)
+-- Power BI (reporting service account).
+-- Uses {ENV}_POWERBI, not {ENV}_REPORTER: the service account reads
+-- GOLD and every domain mart, while {ENV}_REPORTER is the human role
+-- for the shared GOLD schema only.
 SET SVC_PBI_USER  = 'SVC_' || $ENV_ABBR || 'POWERBI';
-SET PBI_ROLE      = $ENV_ABBR || 'REPORTER';
-SET PBI_WAREHOUSE = $ENV_ABBR || 'REPORTER_WH';
+SET PBI_ROLE      = $ENV_ABBR || 'POWERBI';
+SET PBI_WAREHOUSE = $ENV_ABBR || 'POWERBI_WH';
 
 -- Deployment (CI/CD)
 SET SVC_DEPLOY_USER  = 'SVC_' || $ENV_ABBR || 'DEPLOY';

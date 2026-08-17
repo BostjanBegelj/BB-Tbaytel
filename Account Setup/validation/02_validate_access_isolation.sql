@@ -193,11 +193,13 @@ CREATE TABLE PROD_DB.GOLD.T_ISOLATION_TEST (X INT);
 -- ------------------------------------------------------------
 -- 2.5  Domain reporters see only their own domain  (AC8)
 -- ------------------------------------------------------------
-USE ROLE PROD_REPORTER_BILLING;
-USE WAREHOUSE PROD_REPORTER_BILLING_WH;
+-- Only meaningful once at least two GOLD_{domain} marts exist.
+-- Substitute two real domains for the placeholders below.
+USE ROLE PROD_REPORTER_FIN_ACCOUNTING;
+USE WAREHOUSE PROD_REPORTER_FIN_ACCOUNTING_WH;
 
 -- MUST FAIL - foreign domain
-SELECT COUNT(*) FROM PROD_DB.GOLD_FINANCE.INFORMATION_SCHEMA.TABLES;
+SELECT COUNT(*) FROM PROD_DB.GOLD_SMC_SALES.INFORMATION_SCHEMA.TABLES;
 
 
 -- ============================================================

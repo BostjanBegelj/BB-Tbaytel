@@ -5,8 +5,14 @@
 -- Creates the SCIM provisioner role and SCIM security integration.
 -- Both are Azure-independent and can be prepared ahead; only the
 -- provisioning TOKEN is generated later (runtime, valid ~6 months).
--- SCIM creates group roles WITHOUT privileges - grants are applied
--- separately from PLATFORM_DB.RBAC.ENTRA_GROUP_ROLE_MAP.
+--
+-- ROLE MODEL - two tiers. SCIM creates one Snowflake role per Entra
+-- group, holding NO privileges. Each is then GRANTED the matching
+-- functional role from environment/02, once, per section 3 below.
+-- Entra owns membership; Snowflake owns roles and privileges. The
+-- functional roles are never created or owned by SCIM - {ENV}_SYSADMIN
+-- in particular must exist before Entra is wired up, since it owns the
+-- environment database and runs the RBAC provisioning procedures.
 -- ============================================================
 USE ROLE ACCOUNTADMIN;
 
@@ -60,6 +66,44 @@ CREATE SECURITY INTEGRATION IF NOT EXISTS AAD_PROVISIONING
 -- months; regenerate before expiry or provisioning silently stops.
 -- ------------------------------------------------------------
 -- SELECT SYSTEM$GENERATE_SCIM_ACCESS_TOKEN('AAD_PROVISIONING');
+
+
+-- ============================================================
+-- 3. CONNECT THE SYNCED ROLES TO THE FUNCTIONAL ROLES
+--    Run AFTER SCIM has provisioned the groups. One grant per group,
+--    once. Nothing here is per user.
+--
+--    Do not type the synced role names - SCIM names each role after
+--    its Entra group verbatim, so hyphens or lower case produce quoted,
+--    case-sensitive identifiers. Generate the statements from the
+--    catalogue instead, then run the output.
+-- ============================================================
+-- SHOW ROLES LIKE 'SNOWFLAKE%';     -- adjust to the agreed group prefix
+--
+-- SELECT 'GRANT ROLE ' || REPLACE(UPPER("name"), 'SNOWFLAKE_', '')
+--        || ' TO ROLE "' || "name" || '";' AS STMT
+-- FROM   TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+--
+-- Verify a person ends up with the right access:
+-- SHOW GRANTS TO USER <login>;
+
+
+-- ============================================================
+-- 4. DEFAULT_SECONDARY_ROLES  -  set on the ENTRA side
+--    Users must have DEFAULT_SECONDARY_ROLES = ('ALL') or only one
+--    role is active per session. That breaks additive reporting - a
+--    person in both {ENV}_REPORTER and a domain reporter needs both at
+--    once, and Power BI cannot switch roles mid-session.
+--
+--    This is the SCIM attribute `defaultSecondaryRoles`, value 'ALL',
+--    in namespace urn:ietf:params:scim:schemas:extension:2.0:User
+--    (Azure). It belongs in the Entra provisioning attribute mapping.
+--    Setting it with ALTER USER is unreliable for SCIM-managed users:
+--    a full PUT sync that omits the attribute can reset it.
+--
+--    Verify on the first provisioned user:
+-- DESC USER <login>;   -- check DEFAULT_SECONDARY_ROLES
+-- ============================================================
 
 
 -- ============================================================

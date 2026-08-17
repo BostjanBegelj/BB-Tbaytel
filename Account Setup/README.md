@@ -41,12 +41,20 @@ Organized by **lifecycle**, not by object type:
 | 14 | `14_integration_git_azure_devops.sql` | Azure DevOps API integration + PAT secret + git repository |
 | 15 | `15_integration_storage_azure_blob.sql` | Azure Blob storage integration |
 | 16 | `16_integration_storage_s3.sql` | AWS S3 storage integration (+ free public-bucket test) |
-| 17 | `17_identity_scim_provisioning.sql` | Entra SCIM: `AAD_PROVISIONER` role + `AAD_PROVISIONING` integration (token generated at runtime) |
+| 17 | `17_identity_scim_provisioning.sql` | Entra SCIM: `AAD_PROVISIONER` role + `AAD_PROVISIONING` integration (token generated at runtime), the SCIM-scoped network policy pattern, the group→functional-role grant step, and the `defaultSecondaryRoles` requirement |
 | 18 | `18_identity_sso_saml2.sql` | Entra SSO (SAML2) `ENTRAID_SSO` — **gated** template; run only after Private Link URLs are final |
 
 Groups: **platform** (02–04) · **security** (05–09) · **terraform + human access** (10–12) · **integrations** (13–16) · **identity federation / Azure** (17–18).
 
-> Azure-integration prep (from the integration guides/runbooks): `01` params + monitor, the Entra SCIM network rule in `06` (also added to `INGRESS_POLICY` in `07`), the SSO-users policy in `08`, `ENTRA_GROUP_ROLE_MAP` in `04`, and `17`/`18`. SSO (`18`) stays gated until the Private Link URLs are final — configuring it earlier forces the SAML IdP re-registration rework.
+> Azure-integration prep (from the integration guides/runbooks): `01` params + monitor, the SSO-users policy in `08`, and `17`/`18`. The Entra SCIM network rule is **not** in `INGRESS_POLICY` — it needs all Azure public ranges and gets its own policy on the SCIM integration in `17`. SSO (`18`) stays gated until the Private Link URLs are final — configuring it earlier forces the SAML IdP re-registration rework.
+
+> **Role model — two tiers.** Snowflake creates and owns every role and all
+> privileges. Entra groups are synced in by SCIM as *separate* roles holding no
+> privileges, and each is granted the matching functional role (once, in `17`).
+> Entra manages membership; Snowflake manages access. The functional roles are
+> never created by SCIM — `{ENV}_SYSADMIN` in particular owns the environment
+> database and runs the RBAC procedures, so it must exist before Entra is wired
+> up and for environments built without an Entra tenant.
 
 > Security (05–09) is owned by **SECURITYADMIN**, keeping security a distinct
 > duty from platform admin (SYSADMIN / `PLATFORM_DB`). All `ALTER ACCOUNT SET`
@@ -77,10 +85,11 @@ option — they need your own tenant/org plus credentials.
 | # | File | Creates |
 |---|------|---------|
 | 01 | `01_environment_admin_roles.sql` | `{ENV}_SYSADMIN`, `{ENV}_USERADMIN`, their account grants, **and platform provisioning access** (usage on `PLATFORM_WH`/`PLATFORM_DB`/`RBAC`/procs) |
-| 02 | `02_environment_functional_roles_and_warehouses.sql` | 9 functional roles incl. `DEPLOYER` (CI/CD) + one warehouse each; `DEPLOYER` also gets read on the git repos in `PLATFORM_DB.DEPLOYMENT` |
+| 02 | `02_environment_functional_roles_and_warehouses.sql` | 20 functional roles + one warehouse each: 4 human (`TRANSFORMER`, `ANALYST`, `REPORTER`, `IT_GOVERNANCE`), 13 domain reporters, 3 service (`DATA_LOADER`, `DEPLOYER`, `POWERBI`). `DEPLOYER` also gets read on the git repos in `PLATFORM_DB.DEPLOYMENT` |
 | 03 | `03_environment_database.sql` | `{ENV}_DB` (via `CREATE_DATABASE`) |
-| 04 | `04_environment_schemas.sql` | 9 medallion schemas + retention tiers + RO/FULL role grants |
-| 05 | `05_environment_service_users.sql` | `SVC_{ENV}_ADF` (`{ENV}_DATA_LOADER`), `SVC_{ENV}_POWERBI` (`{ENV}_REPORTER`), `SVC_{ENV}_DEPLOY` (`{ENV}_DEPLOYER`) — all key-pair |
+| 04 | `04_environment_schemas.sql` | 6 medallion schemas (`ADM`, `RAW`, `BRONZE`, `BRONZE_HIST`, `SILVER`, `GOLD`) + retention tiers + RO/FULL role grants. `GOLD_{domain}` marts are added per domain as each is built — the pattern is at the end of the file |
+| 05 | `05_environment_service_users.sql` | `SVC_{ENV}_ADF` (`{ENV}_DATA_LOADER`), `SVC_{ENV}_POWERBI` (`{ENV}_POWERBI`), `SVC_{ENV}_DEPLOY` (`{ENV}_DEPLOYER`) — all key-pair |
+| 90 | `90_migration_reporting_roles_2026_08.sql` | **One-off.** Migrates an environment deployed on 2026-08-07 to the current `02`/`04`/`05`: adds the 13 domain reporters and `{ENV}_POWERBI`, rewires `SVC_{ENV}_POWERBI`, drops the three placeholder reporter roles and `GOLD_*` marts. Delete once DEV, TEST and PROD are all migrated |
 
 ### 3. validation/ (`00` first, the rest after each deployment)
 
@@ -116,20 +125,27 @@ it first.
 
 ## Reporter model (by design)
 
-- **`{ENV}_REPORTER`** — used by the **Power BI service user**
-  (`SVC_{ENV}_POWERBI`). It has RO on `GOLD` and **all** `GOLD_*`
-  domain schemas, so the shared Power BI service account can read
-  across every domain. This broad access is intentional.
-- **`{ENV}_REPORTER_BILLING` / `_FINANCE` / `_MARKETING`** — used by
-  **actual people** connecting via Power BI DirectQuery with SSO,
-  assigned through Entra group mapping. As currently granted in
-  `04_environment_schemas.sql`, each has RO on **its own** domain
-  schema (`GOLD_BILLING` etc.) only. These roles are granted to
-  `{ENV}_SYSADMIN` for management; they are not service users.
+Three distinct things, previously conflated under one name:
 
-No role hierarchy links the domain reporters to the general
-`REPORTER` — they are parallel, and access is set directly per schema.
+- **`{ENV}_POWERBI`** — the **Power BI service user** (`SVC_{ENV}_POWERBI`).
+  RO on `GOLD` and **all** `GOLD_{domain}` marts, so the shared service
+  account can refresh across every domain. This broad access is intentional.
+  Called `{ENV}_REPORTER` in earlier versions; renamed to free that name.
+- **`{ENV}_REPORTER`** — a **human** role, RO on the shared `GOLD` schema
+  only. Reaches people through an Entra group granted to it.
+- **`{ENV}_REPORTER_{domain}`** — 13 **human** roles, one per T2 domain in
+  the client's Data Domain Map. Each gets RO on its own `GOLD_{domain}` mart
+  and nothing else. Also reached through Entra groups.
 
-> Note: domain reporters do **not** currently get RO on the shared
-> `GOLD` schema. If DirectQuery models need conformed dimensions from
-> `GOLD`, add a `GOLD` RO grant to each domain reporter in `04`.
+Access is additive: a person can hold `{ENV}_REPORTER` and one or more domain
+roles. That requires `DEFAULT_SECONDARY_ROLES = 'ALL'` on the user — set in the
+Entra provisioning attribute mapping, not in Snowflake. See `account/17`.
+
+No role hierarchy links the domain reporters to `{ENV}_REPORTER` — they are
+parallel, and access is granted per schema.
+
+> Domain reporters do **not** get RO on the shared `GOLD` schema. Conformed
+> dimensions reach a domain mart as **views over `GOLD`**, relying on
+> Snowflake's ownership chain, so the reporter needs `SELECT` on the view and
+> no privilege on `GOLD`. This only holds if the Gold table and the view are
+> created by the same role — use `{ENV}_DEPLOYER` for both.

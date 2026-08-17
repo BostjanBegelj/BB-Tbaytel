@@ -82,16 +82,20 @@ CREATE ROLE IF NOT EXISTS PII_READER
 -- administering the exemption does not imply being exempt.
 USE ROLE SECURITYADMIN;
 
--- Per-environment grants. Run for each environment AFTER its roles exist
--- (environment/02). The pipeline roles need unmasked reads: masking
--- applies on read, so a transform reading masked Silver writes masked Gold.
--- These grants are structural, not discretionary.
--- GRANT ROLE PII_READER TO ROLE DEV_TRANSFORMER;
--- GRANT ROLE PII_READER TO ROLE DEV_DATA_LOADER;
--- GRANT ROLE PII_READER TO ROLE DEV_DEPLOYER;
+-- STRUCTURAL grants - the pipeline SERVICE roles only. Masking applies on
+-- read, so a transform reading masked SILVER would write masked GOLD.
+-- Run per environment AFTER its roles exist (environment/02).
+-- GRANT ROLE PII_READER TO ROLE DEV_DATA_LOADER;   -- ADF ingestion
+-- GRANT ROLE PII_READER TO ROLE DEV_DEPLOYER;      -- CI/CD transforms
 --
--- Human access to unmasked PII should be granted through an Entra group
--- mapped to PII_READER, not by granting the role to a functional role.
+-- {ENV}_TRANSFORMER is deliberately NOT here. It is a HUMAN role - data
+-- engineers working interactively - and the pipeline does not run as it
+-- (ADF runs as SVC_{ENV}_ADF, CI/CD as SVC_{ENV}_DEPLOY). Granting it
+-- here would silently give every data engineer unmasked PII.
+--
+-- All human access to unmasked PII, including for data engineers, is
+-- granted through the Entra group mapped to PII_READER so that it is an
+-- explicit, reviewable assignment.
 
 
 -- ============================================================
@@ -213,7 +217,7 @@ ALTER TAG PII_TYPE SET
 
 -- ============================================================
 -- 5. Row access policy
---    Phase 1 separates reporting domains by SCHEMA (GOLD_BILLING etc.)
+--    Phase 1 separates reporting domains by SCHEMA (GOLD_{domain})
 --    and by role, so row-level filtering is not required yet. This is
 --    provided so the mechanism exists the day a shared table has to
 --    serve several domains from one set of rows.
@@ -241,9 +245,8 @@ COMMENT = 'Which role may see which domain rows. Read by RAP_DOMAIN. PK is not e
 --   ('DEV_DATA_LOADER',        '*',         'pipeline - must see all rows'),
 --   ('DEV_DEPLOYER',           '*',         'CI/CD full refresh'),
 --   ('DEV_REPORTER',           '*',         'Power BI service account'),
---   ('DEV_REPORTER_BILLING',   'BILLING',   'domain reporter'),
---   ('DEV_REPORTER_FINANCE',   'FINANCE',   'domain reporter'),
---   ('DEV_REPORTER_MARKETING', 'MARKETING', 'domain reporter');
+--   ('DEV_REPORTER_FIN_ACCOUNTING', 'FIN_ACCOUNTING', 'domain reporter'),
+--   ('DEV_REPORTER_SMC_SALES',      'SMC_SALES',      'domain reporter');
 
 -- NOTE: the policy argument must NOT be named DOMAIN_CODE. Inside the
 -- subquery an identical name resolves to the mapping table's column and
