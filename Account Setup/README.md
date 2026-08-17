@@ -87,9 +87,8 @@ option — they need your own tenant/org plus credentials.
 | 01 | `01_environment_admin_roles.sql` | `{ENV}_SYSADMIN`, `{ENV}_USERADMIN`, their account grants, **and platform provisioning access** (usage on `PLATFORM_WH`/`PLATFORM_DB`/`RBAC`/procs) |
 | 02 | `02_environment_functional_roles_and_warehouses.sql` | 20 functional roles + one warehouse each: 4 human (`TRANSFORMER`, `ANALYST`, `REPORTER`, `IT_GOVERNANCE`), 13 domain reporters, 3 service (`DATA_LOADER`, `DEPLOYER`, `POWERBI`). `DEPLOYER` also gets read on the git repos in `PLATFORM_DB.DEPLOYMENT` |
 | 03 | `03_environment_database.sql` | `{ENV}_DB` (via `CREATE_DATABASE`) |
-| 04 | `04_environment_schemas.sql` | 6 medallion schemas (`ADM`, `RAW`, `BRONZE`, `BRONZE_HIST`, `SILVER`, `GOLD`) + retention tiers + RO/FULL role grants. `GOLD_{domain}` marts are added per domain as each is built — the pattern is at the end of the file |
+| 04 | `04_environment_schemas.sql` | 19 schemas — `ADM`, `RAW`, `BRONZE`, `BRONZE_HIST`, `SILVER`, `GOLD` + 13 `GOLD_{domain}` marts (one per T2 domain) — with retention tiers and RO/FULL role grants |
 | 05 | `05_environment_service_users.sql` | `SVC_{ENV}_ADF` (`{ENV}_DATA_LOADER`), `SVC_{ENV}_POWERBI` (`{ENV}_POWERBI`), `SVC_{ENV}_DEPLOY` (`{ENV}_DEPLOYER`) — all key-pair |
-| 90 | `90_migration_reporting_roles_2026_08.sql` | **One-off.** Migrates an environment deployed on 2026-08-07 to the current `02`/`04`/`05`: adds the 13 domain reporters and `{ENV}_POWERBI`, rewires `SVC_{ENV}_POWERBI`, drops the three placeholder reporter roles and `GOLD_*` marts. Delete once DEV, TEST and PROD are all migrated |
 
 ### 3. validation/ (`00` first, the rest after each deployment)
 
