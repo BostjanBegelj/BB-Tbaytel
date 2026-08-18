@@ -43,6 +43,7 @@ Organized by **lifecycle**, not by object type:
 | 16 | `16_integration_storage_s3.sql` | AWS S3 storage integration (+ free public-bucket test) |
 | 17 | `17_identity_scim_provisioning.sql` | Entra SCIM: `AAD_PROVISIONER` role + `AAD_PROVISIONING` integration (token generated at runtime), the SCIM-scoped network policy pattern, the group→functional-role grant step, and the `defaultSecondaryRoles` requirement |
 | 18 | `18_identity_sso_saml2.sql` | Entra SSO (SAML2) `ENTRAID_SSO` — **gated** template; run only after Private Link URLs are final |
+| 19 | `19_entra_group_role_grants.sql` | **Run last, once.** Grants each SCIM-synced Entra-group role its matching functional role (two-tier RBAC). All 59 grants as commented templates + a generator query. Needs SCIM provisioned and all environments built first |
 
 Groups: **platform** (02–04) · **security** (05–09) · **terraform + human access** (10–12) · **integrations** (13–16) · **identity federation / Azure** (17–18).
 

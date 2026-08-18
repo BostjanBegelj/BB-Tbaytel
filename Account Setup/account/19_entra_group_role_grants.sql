@@ -1,0 +1,130 @@
+-- ============================================================
+-- 19  ENTRA GROUP -> SNOWFLAKE ROLE GRANTS  (two-tier RBAC)
+-- RUN ONCE, LAST. After SCIM has provisioned the groups AND every
+-- environment (environment/02) has been created.
+--
+-- The functional roles hold the privileges and are owned by Snowflake.
+-- Entra groups are synced in by SCIM as SEPARATE roles that hold no
+-- privileges; each is granted the matching functional role here, once.
+-- Entra then manages membership; Snowflake manages access.
+--
+-- EVERYTHING BELOW IS A TEMPLATE - commented, because the synced roles
+-- do not exist until SCIM runs, and their exact names are the Entra
+-- group names, which Travis owns. Uncomment once the groups exist and
+-- their names are confirmed.
+--
+-- NAMING: the synced Snowflake role is named after the Entra group
+-- verbatim. The examples use "snowflake-dev-analyst" style, which is
+-- lower-case with hyphens, so the Snowflake identifier is QUOTED and
+-- CASE-SENSITIVE - it must be written in double quotes in every grant,
+-- exactly as shown. This is why the names appear as "..." below.
+--
+-- Only HUMAN roles get an Entra group. Service roles (DATA_LOADER,
+-- DEPLOYER, POWERBI) are used by SVC_ users and are NOT listed here.
+--
+-- Prefer generating these from the catalogue rather than typing them -
+-- see the query at the end, which quotes correctly and covers every
+-- group that actually exists.
+-- ============================================================
+USE ROLE SECURITYADMIN;   -- holds MANAGE GRANTS
+
+
+-- ------------------------------------------------------------
+-- Account-wide roles (one group each, no environment prefix)
+-- ------------------------------------------------------------
+-- GRANT ROLE POLICY_ADMIN  TO ROLE "snowflake-policy-admin";
+-- GRANT ROLE PII_READER    TO ROLE "snowflake-pii-reader";
+
+-- ------------------------------------------------------------
+-- DEV
+-- ------------------------------------------------------------
+-- GRANT ROLE DEV_SYSADMIN                             TO ROLE "snowflake-dev-sysadmin";
+-- GRANT ROLE DEV_USERADMIN                            TO ROLE "snowflake-dev-useradmin";
+-- GRANT ROLE DEV_TRANSFORMER                          TO ROLE "snowflake-dev-transformer";
+-- GRANT ROLE DEV_ANALYST                              TO ROLE "snowflake-dev-analyst";
+-- GRANT ROLE DEV_REPORTER                             TO ROLE "snowflake-dev-reporter";
+-- GRANT ROLE DEV_IT_GOVERNANCE                        TO ROLE "snowflake-dev-it-governance";
+-- GRANT ROLE DEV_REPORTER_SMC_MARKETING_COMMS         TO ROLE "snowflake-dev-reporter-smc-marketing-comms";
+-- GRANT ROLE DEV_REPORTER_SMC_SALES                   TO ROLE "snowflake-dev-reporter-smc-sales";
+-- GRANT ROLE DEV_REPORTER_FIN_ACCOUNTING              TO ROLE "snowflake-dev-reporter-fin-accounting";
+-- GRANT ROLE DEV_REPORTER_FIN_FPNA                    TO ROLE "snowflake-dev-reporter-fin-fpna";
+-- GRANT ROLE DEV_REPORTER_FIN_PROCUREMENT             TO ROLE "snowflake-dev-reporter-fin-procurement";
+-- GRANT ROLE DEV_REPORTER_OPE_CUSTOMER_CARE           TO ROLE "snowflake-dev-reporter-ope-customer-care";
+-- GRANT ROLE DEV_REPORTER_OPE_FIELD_OPERATIONS        TO ROLE "snowflake-dev-reporter-ope-field-operations";
+-- GRANT ROLE DEV_REPORTER_HR_PAYROLL_PEOPLE_TALENT    TO ROLE "snowflake-dev-reporter-hr-payroll-people-talent";
+-- GRANT ROLE DEV_REPORTER_HR_HEALTH_SAFETY            TO ROLE "snowflake-dev-reporter-hr-health-safety";
+-- GRANT ROLE DEV_REPORTER_HR_OCCUPATIONAL_HEALTH      TO ROLE "snowflake-dev-reporter-hr-occupational-health";
+-- GRANT ROLE DEV_REPORTER_NET_IT_SECURITY             TO ROLE "snowflake-dev-reporter-net-it-security";
+-- GRANT ROLE DEV_REPORTER_NET_NETWORK_OPERATIONS      TO ROLE "snowflake-dev-reporter-net-network-operations";
+-- GRANT ROLE DEV_REPORTER_NET_ENGINEERING             TO ROLE "snowflake-dev-reporter-net-engineering";
+
+-- ------------------------------------------------------------
+-- TEST
+-- ------------------------------------------------------------
+-- GRANT ROLE TEST_SYSADMIN                            TO ROLE "snowflake-test-sysadmin";
+-- GRANT ROLE TEST_USERADMIN                           TO ROLE "snowflake-test-useradmin";
+-- GRANT ROLE TEST_TRANSFORMER                         TO ROLE "snowflake-test-transformer";
+-- GRANT ROLE TEST_ANALYST                             TO ROLE "snowflake-test-analyst";
+-- GRANT ROLE TEST_REPORTER                            TO ROLE "snowflake-test-reporter";
+-- GRANT ROLE TEST_IT_GOVERNANCE                       TO ROLE "snowflake-test-it-governance";
+-- GRANT ROLE TEST_REPORTER_SMC_MARKETING_COMMS        TO ROLE "snowflake-test-reporter-smc-marketing-comms";
+-- GRANT ROLE TEST_REPORTER_SMC_SALES                  TO ROLE "snowflake-test-reporter-smc-sales";
+-- GRANT ROLE TEST_REPORTER_FIN_ACCOUNTING             TO ROLE "snowflake-test-reporter-fin-accounting";
+-- GRANT ROLE TEST_REPORTER_FIN_FPNA                   TO ROLE "snowflake-test-reporter-fin-fpna";
+-- GRANT ROLE TEST_REPORTER_FIN_PROCUREMENT            TO ROLE "snowflake-test-reporter-fin-procurement";
+-- GRANT ROLE TEST_REPORTER_OPE_CUSTOMER_CARE          TO ROLE "snowflake-test-reporter-ope-customer-care";
+-- GRANT ROLE TEST_REPORTER_OPE_FIELD_OPERATIONS       TO ROLE "snowflake-test-reporter-ope-field-operations";
+-- GRANT ROLE TEST_REPORTER_HR_PAYROLL_PEOPLE_TALENT   TO ROLE "snowflake-test-reporter-hr-payroll-people-talent";
+-- GRANT ROLE TEST_REPORTER_HR_HEALTH_SAFETY           TO ROLE "snowflake-test-reporter-hr-health-safety";
+-- GRANT ROLE TEST_REPORTER_HR_OCCUPATIONAL_HEALTH     TO ROLE "snowflake-test-reporter-hr-occupational-health";
+-- GRANT ROLE TEST_REPORTER_NET_IT_SECURITY            TO ROLE "snowflake-test-reporter-net-it-security";
+-- GRANT ROLE TEST_REPORTER_NET_NETWORK_OPERATIONS     TO ROLE "snowflake-test-reporter-net-network-operations";
+-- GRANT ROLE TEST_REPORTER_NET_ENGINEERING            TO ROLE "snowflake-test-reporter-net-engineering";
+
+-- ------------------------------------------------------------
+-- PROD
+-- ------------------------------------------------------------
+-- GRANT ROLE PROD_SYSADMIN                            TO ROLE "snowflake-prod-sysadmin";
+-- GRANT ROLE PROD_USERADMIN                           TO ROLE "snowflake-prod-useradmin";
+-- GRANT ROLE PROD_TRANSFORMER                         TO ROLE "snowflake-prod-transformer";
+-- GRANT ROLE PROD_ANALYST                             TO ROLE "snowflake-prod-analyst";
+-- GRANT ROLE PROD_REPORTER                            TO ROLE "snowflake-prod-reporter";
+-- GRANT ROLE PROD_IT_GOVERNANCE                       TO ROLE "snowflake-prod-it-governance";
+-- GRANT ROLE PROD_REPORTER_SMC_MARKETING_COMMS        TO ROLE "snowflake-prod-reporter-smc-marketing-comms";
+-- GRANT ROLE PROD_REPORTER_SMC_SALES                  TO ROLE "snowflake-prod-reporter-smc-sales";
+-- GRANT ROLE PROD_REPORTER_FIN_ACCOUNTING             TO ROLE "snowflake-prod-reporter-fin-accounting";
+-- GRANT ROLE PROD_REPORTER_FIN_FPNA                   TO ROLE "snowflake-prod-reporter-fin-fpna";
+-- GRANT ROLE PROD_REPORTER_FIN_PROCUREMENT            TO ROLE "snowflake-prod-reporter-fin-procurement";
+-- GRANT ROLE PROD_REPORTER_OPE_CUSTOMER_CARE          TO ROLE "snowflake-prod-reporter-ope-customer-care";
+-- GRANT ROLE PROD_REPORTER_OPE_FIELD_OPERATIONS       TO ROLE "snowflake-prod-reporter-ope-field-operations";
+-- GRANT ROLE PROD_REPORTER_HR_PAYROLL_PEOPLE_TALENT   TO ROLE "snowflake-prod-reporter-hr-payroll-people-talent";
+-- GRANT ROLE PROD_REPORTER_HR_HEALTH_SAFETY           TO ROLE "snowflake-prod-reporter-hr-health-safety";
+-- GRANT ROLE PROD_REPORTER_HR_OCCUPATIONAL_HEALTH     TO ROLE "snowflake-prod-reporter-hr-occupational-health";
+-- GRANT ROLE PROD_REPORTER_NET_IT_SECURITY            TO ROLE "snowflake-prod-reporter-net-it-security";
+-- GRANT ROLE PROD_REPORTER_NET_NETWORK_OPERATIONS     TO ROLE "snowflake-prod-reporter-net-network-operations";
+-- GRANT ROLE PROD_REPORTER_NET_ENGINEERING            TO ROLE "snowflake-prod-reporter-net-engineering";
+
+
+-- ============================================================
+-- GENERATE the grants from the catalogue instead of typing them.
+-- Run AFTER SCIM has provisioned the groups. Adjust the prefix filter
+-- to the agreed group-naming convention, then run the printed output.
+-- The quoting is produced correctly for you.
+-- ============================================================
+-- SHOW ROLES LIKE 'snowflake-%';
+-- SELECT 'GRANT ROLE '
+--        || UPPER(REPLACE(SUBSTR("name", LEN('snowflake-') + 1), '-', '_'))
+--        || ' TO ROLE "' || "name" || '";' AS STMT
+-- FROM   TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+-- ORDER  BY "name";
+
+
+-- ============================================================
+-- VALIDATION - after the grants are applied
+-- ============================================================
+-- Each synced role should hold exactly one functional role.
+-- SHOW GRANTS TO ROLE "snowflake-dev-analyst";
+--
+-- And a person in the group should end up with the access:
+-- SHOW GRANTS TO USER <login>;
+

@@ -71,21 +71,9 @@ CREATE SECURITY INTEGRATION IF NOT EXISTS AAD_PROVISIONING
 -- ============================================================
 -- 3. CONNECT THE SYNCED ROLES TO THE FUNCTIONAL ROLES
 --    Run AFTER SCIM has provisioned the groups. One grant per group,
---    once. Nothing here is per user.
---
---    Do not type the synced role names - SCIM names each role after
---    its Entra group verbatim, so hyphens or lower case produce quoted,
---    case-sensitive identifiers. Generate the statements from the
---    catalogue instead, then run the output.
+--    once. The explicit grant list (all 59) and the generator query
+--    are in 19_entra_group_role_grants.sql.
 -- ============================================================
--- SHOW ROLES LIKE 'SNOWFLAKE%';     -- adjust to the agreed group prefix
---
--- SELECT 'GRANT ROLE ' || REPLACE(UPPER("name"), 'SNOWFLAKE_', '')
---        || ' TO ROLE "' || "name" || '";' AS STMT
--- FROM   TABLE(RESULT_SCAN(LAST_QUERY_ID()));
---
--- Verify a person ends up with the right access:
--- SHOW GRANTS TO USER <login>;
 
 
 -- ============================================================
