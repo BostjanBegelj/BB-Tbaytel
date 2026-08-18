@@ -153,15 +153,24 @@ BEGIN
            disabling skip-detection for that table and filling the log with phantom drift.
            Only "BRONZE has a column HIST lacks" actually requires a sync before hashing.       */
         v_phase := 'BUILD_COLS';
-        SELECT LISTAGG('"' || b.COLUMN_NAME || '"', ', ') WITHIN GROUP (ORDER BY b.ORDINAL_POSITION),
-               COUNT_IF(NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS h
-                                     WHERE h.TABLE_SCHEMA = :v_hist_sch
-                                       AND h.TABLE_NAME   = :v_table
-                                       AND h.COLUMN_NAME  = b.COLUMN_NAME))
+
+        SELECT
+            LISTAGG('"' || b.COLUMN_NAME || '"', ', ')
+                WITHIN GROUP (ORDER BY b.ORDINAL_POSITION),
+            COUNT_IF(h.COLUMN_NAME IS NULL)
           INTO :v_cols, :v_missing_in_hist
           FROM INFORMATION_SCHEMA.COLUMNS b
-         WHERE b.TABLE_SCHEMA = :v_src_sch AND b.TABLE_NAME = :v_table
-           AND b.COLUMN_NAME NOT IN ('PPN_ID', 'PPN_TIMESTAMP', 'SRC_FILE_NAME');
+          LEFT JOIN INFORMATION_SCHEMA.COLUMNS h
+            ON h.TABLE_SCHEMA = :v_hist_sch
+           AND h.TABLE_NAME   = :v_table
+           AND h.COLUMN_NAME  = b.COLUMN_NAME
+         WHERE b.TABLE_SCHEMA = :v_src_sch
+           AND b.TABLE_NAME   = :v_table
+           AND b.COLUMN_NAME NOT IN (
+               'PPN_ID',
+               'PPN_TIMESTAMP',
+               'SRC_FILE_NAME'
+           );
 
         IF (v_missing_in_hist > 0) THEN
             /* --- 3. structural change: do NOT hash (HIST not synced yet) */
