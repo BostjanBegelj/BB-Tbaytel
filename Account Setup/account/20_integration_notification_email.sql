@@ -44,11 +44,11 @@ ORDER  BY NAME;
 CREATE NOTIFICATION INTEGRATION IF NOT EXISTS EMAIL_INTEGRATION
   TYPE               = EMAIL
   ENABLED            = TRUE
-  ALLOWED_RECIPIENTS = ('<platform.owner@tbaytel.com>',
-                        '<data.ops@tbaytel.com>')
-  DEFAULT_SUBJECT    = 'Snowflake notification'
-  COMMENT            = 'Outbound email for platform notifications (antFarm DQ results, ETL alerts). Used by {ENV}_DB.ADM.SP_SEND_NOTIFICATION.';
-
+--  ALLOWED_RECIPIENTS = ('<platform.owner@tbaytel.com>',
+--                        '<data.ops@tbaytel.com>')
+--  DEFAULT_SUBJECT    = 'Snowflake notification'
+--  COMMENT            = 'Outbound email for platform notifications (antFarm DQ results, ETL alerts). Used by {ENV}_DB.ADM.SP_SEND_NOTIFICATION.'
+;
 DESC INTEGRATION EMAIL_INTEGRATION;
 
 

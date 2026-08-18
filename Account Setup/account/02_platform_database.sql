@@ -54,6 +54,8 @@ CREATE SCHEMA IF NOT EXISTS FILE_FORMATS WITH MANAGED ACCESS
 -- to a Snowsight shared workspace (which stores files, not database objects).
 CREATE SCHEMA IF NOT EXISTS SHARED_WORKSPACE WITH MANAGED ACCESS
   COMMENT = 'Admin/engineer cross-environment scratch and collaboration area (SQL objects; not a Snowsight workspace)';
+CREATE SCHEMA IF NOT EXISTS ANTFARM WITH MANAGED ACCESS
+  COMMENT = 'Antfarm environment';
 
 
 -- ------------------------------------------------------------

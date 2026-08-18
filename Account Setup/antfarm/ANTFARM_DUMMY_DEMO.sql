@@ -187,11 +187,11 @@ CALL ADM.SP_DQ_EXECUTE(
 -- Replace the address before running.
 -- =====================================================================
 
-/*
+
 
 UPDATE PLATFORM_DB.ANTFARM.DQ_LOG
 SET DQ_LOG_MAIL_TO =
-    '{"active":["your.verified.user@company.com"],"inactive":[]}'
+    '{"active":["bostjan.begelj@blend360.com"],"inactive":[]}'
 WHERE RUN_ID = 'DEMO_RUN_ISSUES';
 
 CALL ADM.SP_DQ_EXECUTE(
@@ -199,7 +199,7 @@ CALL ADM.SP_DQ_EXECUTE(
     P_OUTPUT_TYPE   => 'EMAIL'
 );
 
-*/
+
 
 
 -- =====================================================================
@@ -214,5 +214,9 @@ SELECT
     DQ_SEVERITY_NAME,
     NUM_OF_ERRORS,
     ERROR_ROWS
+FROM PLATFORM_DB.ANTFARM.DQ_LOG
+ORDER BY RUN_ID, DQ_RULE_NAME;
+
+SELECT *
 FROM PLATFORM_DB.ANTFARM.DQ_LOG
 ORDER BY RUN_ID, DQ_RULE_NAME;
