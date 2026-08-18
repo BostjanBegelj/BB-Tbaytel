@@ -29,6 +29,9 @@
 --   ADM.* is schema-qualified only, as everywhere else in this
 --   framework. The caller must have the environment database set.
 -- ============================================================
+use role dev_sysadmin;
+use database dev_db;
+use schema adm;
 
 CREATE OR REPLACE PROCEDURE ADM.SP_DQ_RESULT(
     P_RUN_ID         VARCHAR,

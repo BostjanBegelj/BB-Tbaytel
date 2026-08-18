@@ -22,6 +22,9 @@
 --   * status = SUCCESS means technical execution succeeded.
 --   * DQ findings are returned separately in dq_result.
 -- ============================================================
+use role dev_sysadmin;
+use database dev_db;
+use schema adm;
 
 CREATE OR REPLACE PROCEDURE ADM.SP_DQ_EXECUTE(
     P_DQ_GROUP_NAME  VARCHAR,

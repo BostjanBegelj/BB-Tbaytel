@@ -20,6 +20,10 @@
 --     recipients must also be in that list.
 --   * Subject length is limited to 256 characters.
 -- ============================================================
+use role dev_sysadmin;
+use database dev_db;
+use schema adm;
+
 
 CREATE OR REPLACE PROCEDURE ADM.SP_SEND_NOTIFICATION(
     P_SUBJECT       VARCHAR,
