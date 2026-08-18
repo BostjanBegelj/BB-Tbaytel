@@ -419,6 +419,7 @@ Demo scenarios:
 | `DQ_DEMO_ISSUES` | SUCCESS | 3 checks, 2 failed, 3 errors |
 | `DQ_DEMO_RESULT_MISSING` | SUCCESS | result missing -> top-level FAILED / GET_RESULT |
 | `DQ_DEMO_TECH_FAIL` | FAILED | result procedure not called |
+| `DQ_SILVER` | SUCCESS | 2 checks, 0 errors - the real gate group, clean so a clean ETL run passes |
 | any unknown group | FAILED | `API_RUN_DQ` http_code 400, phase `RUN_DQ` |
 
 Plus one demo caller:
@@ -479,6 +480,47 @@ Before real Antfarm:
 ```text
 ANTFARM_DUMMY_CLEANUP.sql
 ```
+
+---
+
+## Use inside the pre-GOLD gate
+
+`ADM.SP_GATE_CHECK` (the ETL framework's pre-GOLD gate) calls `SP_DQ_EXECUTE`
+directly, so DQ is part of the gate rather than a separate orchestrator step:
+
+```sql
+CALL ADM.SP_DQ_EXECUTE(
+    P_DQ_GROUP_NAME  => 'DQ_SILVER',
+    P_OUTPUT_TYPE    => 'JSON',
+    P_MAX_ERROR_ROWS => 5
+);
+```
+
+The group name (`DQ_SILVER`), the blocking severity (`100`) and the error-row
+sample (`5`) are fixed constants inside `SP_GATE_CHECK`, not parameters — one
+gate, one group, and the ADF contract for `SP_FINALIZE_RUN` stays unchanged.
+
+How the gate reads the result:
+
+| Result | `dq_verdict` | Gate |
+|---|---|---|
+| `status` <> SUCCESS | `FAIL` | FAIL — DQ could not prove the data is OK |
+| `has_issues` = false | `PASS` | PASS |
+| `max_severity_level` >= 100 | `FAIL` | FAIL — GOLD blocked |
+| `max_severity_level` < 100 | `WARN` | PASS — reported, GOLD still refreshed |
+| findings with unreadable severity | `FAIL` | FAIL — unknown never means success |
+| table checks already failed | `SKIPPED` | FAIL (on the tables) — no antFarm run spent |
+
+`P_MAX_ERROR_ROWS => 5` matters here: `SP_FINALIZE_RUN` writes the whole gate
+object, DQ result included, into `ADM.PPN_LOG`. The full error set stays in
+`PLATFORM_DB.ANTFARM.DQ_LOG`.
+
+Because the gate polls antFarm inside the finalize call, the ADF activity
+timeout on `SP_FINALIZE_RUN` must exceed `P_TIMEOUT_S` (3600s default), and the
+gate holds a warehouse for the duration.
+
+EMAIL mode is not used by the gate. The gate's job is to block GOLD; DQ
+notification is a separate concern and stays on the `EMAIL` path.
 
 ---
 

@@ -34,6 +34,11 @@
 --   DQ_DEMO_TECH_FAIL
 --       Simulated Antfarm technical failure.
 --
+--   DQ_SILVER
+--       The real pre-GOLD group name hard-coded in ADM.SP_GATE_CHECK. Clean by default
+--       (2 checks, 0 errors) so the gate PASSes end to end. ANTFARM_DUMMY_DEMO.sql shows how
+--       to flip it to blocking and back.
+--
 --   any unknown group name
 --       API_RUN_DQ returns http_code 400 and no run_id.
 --
@@ -48,7 +53,6 @@
 
 
 USE DATABASE PLATFORM_DB;
-USE ROLE SYSADMIN;
 
 CREATE SCHEMA IF NOT EXISTS ANTFARM;
 
@@ -472,6 +476,108 @@ VALUES
 );
 
 
+-- ---------------------------------------------------------------------
+-- DQ_SILVER
+-- The real pre-GOLD group name, hard-coded in ADM.SP_GATE_CHECK.
+-- Clean by default so a clean ETL run passes the gate end to end.
+-- ANTFARM_DUMMY_DEMO.sql flips these rows to blocking to test a FAIL.
+-- ---------------------------------------------------------------------
+
+INSERT INTO PLATFORM_DB.ANTFARM.DQ_LOG
+(
+    DQ_LOG_ID, QUEUE_TIME,
+    DQ_GROUP_ID, DQ_GROUP_NAME,
+    DQ_RULE_ID, DQ_RULE_NAME, DQ_RULE_CODE, DQ_CHECK_TYPE,
+    STATUS_ID, ERROR_MESSAGE,
+    SCHEMA_NAME, TABLE_NAME, COLUMN_NAME,
+    CHECK_SQL, RUN_PARAMETERS,
+    START_TIME, END_TIME,
+    NUM_OF_ERRORS, ERROR_ROWS,
+    DQ_SEVERITY_LEVEL, DQ_SEVERITY_NAME,
+    RUN_ID, PROJECT, CALLER, DQ_TAG_NAMES,
+    MODIFIED_DATE,
+    DQ_LOG_MAIL_TO, DQ_LOG_MAIL_CC,
+    DQ_CUSTOM_COLUMNS_GROUP, DQ_CUSTOM_COLUMNS_RULE,
+    SF_QUERY_ID, DQ_SEVERITY_ID, DQ_TAG_IDS, PROJECT_ID,
+    GENERATED_CHECK_SQL
+)
+VALUES
+(
+    'DEMO-LOG-SILVER-1',
+    CURRENT_TIMESTAMP(),
+    'DEMO-GRP-SILVER',
+    'DQ_SILVER',
+    'DEMO-RULE-SILVER-1',
+    'SILVER business key must be populated',
+    'SILVER_BK_NOT_NULL',
+    'not_null',
+    1,
+    NULL,
+    'SILVER',
+    'CUSTOMER',
+    'CUSTOMER_BK',
+    'SELECT * FROM SILVER.CUSTOMER WHERE CUSTOMER_BK IS NULL',
+    '{"demo":true,"scenario":"SILVER_CLEAN"}',
+    CURRENT_TIMESTAMP(),
+    CURRENT_TIMESTAMP(),
+    0,
+    '[]',
+    100,
+    'ERROR',
+    'DEMO_RUN_SILVER',
+    'DWH',
+    'antfarm_admin',
+    '["DEMO","DQ","SILVER"]',
+    CURRENT_TIMESTAMP(),
+    '{"active":[],"inactive":[]}',
+    '{"active":[],"inactive":[]}',
+    '{}',
+    '{}',
+    'DEMO-QUERY-SILVER-1',
+    'DEMO-SEV-100',
+    '["DEMO-TAG"]',
+    'DEMO-PROJECT-DWH',
+    'SELECT * FROM SILVER.CUSTOMER WHERE CUSTOMER_BK IS NULL'
+),
+(
+    'DEMO-LOG-SILVER-2',
+    CURRENT_TIMESTAMP(),
+    'DEMO-GRP-SILVER',
+    'DQ_SILVER',
+    'DEMO-RULE-SILVER-2',
+    'SILVER business key must be unique',
+    'SILVER_BK_UNIQUE',
+    'unique',
+    1,
+    NULL,
+    'SILVER',
+    'CUSTOMER',
+    'CUSTOMER_BK',
+    'SELECT CUSTOMER_BK FROM SILVER.CUSTOMER GROUP BY 1 HAVING COUNT(*) > 1',
+    '{"demo":true,"scenario":"SILVER_CLEAN"}',
+    CURRENT_TIMESTAMP(),
+    CURRENT_TIMESTAMP(),
+    0,
+    '[]',
+    50,
+    'WARNING',
+    'DEMO_RUN_SILVER',
+    'DWH',
+    'antfarm_admin',
+    '["DEMO","DQ","SILVER"]',
+    CURRENT_TIMESTAMP(),
+    '{"active":[],"inactive":[]}',
+    '{"active":[],"inactive":[]}',
+    '{}',
+    '{}',
+    'DEMO-QUERY-SILVER-2',
+    'DEMO-SEV-50',
+    '["DEMO-TAG"]',
+    'DEMO-PROJECT-DWH',
+    'SELECT CUSTOMER_BK FROM SILVER.CUSTOMER GROUP BY 1 HAVING COUNT(*) > 1'
+);
+
+
 -- =====================================================================
 -- 3. DUMMY METADATA REFRESH PROCEDURES
 --
@@ -561,6 +667,7 @@ $$
         OBJECT_CONSTRUCT_KEEP_NULL(
             'http_code',
                 CASE UPPER(TRY_PARSE_JSON(P_PAYLOAD):dq_group_name::STRING)
+                    WHEN 'DQ_SILVER'              THEN 200
                     WHEN 'DQ_DEMO_OK'             THEN 200
                     WHEN 'DQ_DEMO_ISSUES'         THEN 200
                     WHEN 'DQ_DEMO_RESULT_MISSING' THEN 200
@@ -570,6 +677,7 @@ $$
 
             'run_id',
                 CASE UPPER(TRY_PARSE_JSON(P_PAYLOAD):dq_group_name::STRING)
+                    WHEN 'DQ_SILVER'              THEN 'DEMO_RUN_SILVER'
                     WHEN 'DQ_DEMO_OK'             THEN 'DEMO_RUN_OK'
                     WHEN 'DQ_DEMO_ISSUES'         THEN 'DEMO_RUN_ISSUES'
                     WHEN 'DQ_DEMO_RESULT_MISSING' THEN 'DEMO_RUN_RESULT_MISSING'
@@ -579,6 +687,7 @@ $$
 
             'message',
                 CASE UPPER(TRY_PARSE_JSON(P_PAYLOAD):dq_group_name::STRING)
+                    WHEN 'DQ_SILVER'              THEN 'Dummy Antfarm run started'
                     WHEN 'DQ_DEMO_OK'             THEN 'Dummy Antfarm run started'
                     WHEN 'DQ_DEMO_ISSUES'         THEN 'Dummy Antfarm run started'
                     WHEN 'DQ_DEMO_RESULT_MISSING' THEN 'Dummy Antfarm run started'
@@ -614,6 +723,7 @@ $$
             'http_code',
                 CASE
                     WHEN P_RUN_ID IN (
+                        'DEMO_RUN_SILVER',
                         'DEMO_RUN_OK',
                         'DEMO_RUN_ISSUES',
                         'DEMO_RUN_RESULT_MISSING',
@@ -625,6 +735,7 @@ $$
 
             'task_status',
                 CASE P_RUN_ID
+                    WHEN 'DEMO_RUN_SILVER'         THEN 'SUCCESS'
                     WHEN 'DEMO_RUN_OK'             THEN 'SUCCESS'
                     WHEN 'DEMO_RUN_ISSUES'         THEN 'SUCCESS'
                     WHEN 'DEMO_RUN_RESULT_MISSING' THEN 'SUCCESS'
@@ -674,6 +785,11 @@ ORDER BY RUN_ID;
 --   TOTAL_CHECKS  = 3
 --   FAILED_CHECKS = 2
 --   TOTAL_ERRORS  = 3
+--
+-- DEMO_RUN_SILVER
+--   TOTAL_CHECKS  = 2
+--   FAILED_CHECKS = 0
+--   TOTAL_ERRORS  = 0
 --
 -- DEMO_RUN_RESULT_MISSING intentionally has no DQ_LOG rows.
 -- =====================================================================

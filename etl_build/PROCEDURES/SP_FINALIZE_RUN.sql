@@ -1,5 +1,7 @@
 -- ADM.SP_FINALIZE_RUN - one call to end a run: GATE -> (PASS: refresh GOLD | FAIL: skip) -> CLOSE.
--- ADF calls this after SP_RUN_DQ_CHECKS. It derives the final run status itself:
+-- ADF calls this once, after the table loads. There is no separate DQ activity any more: the gate
+-- invokes antFarm DQ itself (group DQ_SILVER, blocking severity 100 - fixed inside SP_GATE_CHECK),
+-- so this signature is unchanged. It derives the final run status itself:
 --   * gate PASS and GOLD ok -> SP_CLOSE_PPN(SUCCESS); returns a SUCCESS VARIANT.
 --   * gate FAIL, or GOLD errors -> SP_CLOSE_PPN(ERROR) then RE-RAISE, so the ADF activity fails
 --     and alerting fires (the run is already durably closed ERROR first).
@@ -9,6 +11,10 @@
 -- P_EXPECTED_COUNT is passed straight through to the gate: the number of tables the orchestrator
 -- dispatched, so the gate can prove none went missing (ADF: @length(activity('LookupTables')
 -- .output.value)). Optional - leave it out and the gate checks failures only. See SP_GATE_CHECK.
+--
+-- ACTIVITY TIMEOUT: the gate polls antFarm inside this call (SP_DQ_EXECUTE default timeout 3600s,
+-- holding a warehouse via SYSTEM$WAIT). The ADF activity timeout must exceed that, and the whole
+-- gate object - DQ detail included - is written to PPN_LOG by the GATE_CHECK step below.
 
 use role dev_sysadmin;
 use database dev_db;
@@ -36,6 +42,7 @@ DECLARE
     v_gold         VARIANT;
     v_close        VARIANT;
     v_gate_verdict STRING;
+    v_dq_verdict   STRING;
     v_run_status   STRING  DEFAULT 'ERROR';
     v_reason       STRING;
     v_phase        STRING  DEFAULT 'INIT';
@@ -53,6 +60,7 @@ BEGIN
     v_phase := 'GATE';
     CALL ADM.SP_GATE_CHECK(P_PPN_ID => :v_ppn, P_EXPECTED_COUNT => :v_expected) INTO :v_gate;
     v_gate_verdict := UPPER(COALESCE(GET(v_gate, 'gate')::STRING, 'FAIL'));
+    v_dq_verdict   := UPPER(COALESCE(GET(v_gate, 'dq_verdict')::STRING, 'UNKNOWN'));
     v_reason       := COALESCE(GET(v_gate, 'reason')::STRING, '');
 
     CALL ADM.SP_LOG_STEP(
@@ -61,7 +69,8 @@ BEGIN
         P_STATUS      => IFF(:v_gate_verdict = 'PASS', 'SUCCESS', 'ERROR'),
         P_LOG_START   => :v_started_at,
         P_LOG_END     => CURRENT_TIMESTAMP(),
-        P_MESSAGE     => 'GATE ' || :v_gate_verdict || ': ' || :v_reason,
+        P_MESSAGE     => 'GATE ' || :v_gate_verdict || ' / DQ ' || :v_dq_verdict
+                      || ': ' || :v_reason,
         P_DETAIL_JSON => OBJECT_CONSTRUCT(
             'context', OBJECT_CONSTRUCT('procedure','SP_FINALIZE_RUN','ppn_id',:v_ppn),
             'gate', :v_gate
