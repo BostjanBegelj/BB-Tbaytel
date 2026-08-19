@@ -210,6 +210,10 @@ Source → (ADF extract to Blob, FILE only) → BRONZE → BRONZE_HIST → SILVE
 
 ADF creates a run, validates configuration, then calls one Snowflake procedure per table that chains landing → change-detection → history → Silver. After all tables, a single finalize call runs the pre-Gold quality gate and, if it passes, refreshes Gold. Run state and step-level logs are written to the `ADM` schema throughout. The full procedure inventory and behaviour are in the *ETL / Data Pipeline* companion; data quality runs through **antFarm** (deployed under `PLATFORM_DB.ANTFARM`), invoked inside the gate.
 
+Gold is materialised as Snowflake **dynamic tables** with automatic scheduling disabled, so it is refreshed **only by the pipeline** (the finalize step) after the gate passes — never on a background clock that could publish un-gated Silver. Conformed calendar dimensions are static reference tables.
+
+The per-domain marts (`GOLD_{domain}`) are exposed as **views over the shared `GOLD` objects**. Both the `GOLD` dynamic tables and the mart views are owned by `{ENV}_SYSADMIN`, so Snowflake's **ownership chain** lets a domain reporter read its mart with only `SELECT` on the view and no privilege on `GOLD`. Because the pipeline refreshes the dynamic tables as `{ENV}_DATA_LOADER`, that role holds `OPERATE` on them through its `FULL` access role — `CREATE_SCHEMA` grants `OPERATE` on dynamic tables to the read-write access role (see the Security & RBAC companion).
+
 ---
 
 ## 11. Deployment, CI/CD and infrastructure-as-code
@@ -251,7 +255,7 @@ Every deployment is checked by the validation layer:
 - **Network policy IP ranges** — Tbaytel corporate ranges not yet supplied; the ingress policy carries a placeholder and must not be activated until the real ranges are in.
 - **Private Link** — decided; endpoint identifiers to be filled in on the billable account, after which public access is blocked.
 - **antFarm on Snowpark Container Services** — requires the billed account (compute pools are unavailable on trial); currently stubbed.
-- **`SP_REFRESH_GOLD`** — the Gold refresh is a stub pending the Gold model (Dynamic Tables / dbt).
+- **Production Gold model** — the Gold refresh mechanism is built (dynamic tables, pipeline-only refresh) and demonstrated on a sample star; the full Gold model across the business domains, and the `GOLD_{domain}` mart views over it, are still to be built.
 
 ---
 

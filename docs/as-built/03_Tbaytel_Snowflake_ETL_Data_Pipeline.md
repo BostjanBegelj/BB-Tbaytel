@@ -2,7 +2,7 @@
 
 **Client:** Tbaytel  **Prepared by:** Blend  **Document type:** Data Pipeline Design & Build (as-built)
 **Version:** 0.1 (Draft for internal review)  **Date:** 19 August 2026
-**Status:** Prepared and reviewed. The procedures are authored and tested end-to-end against a development database; the Tbaytel account is not yet provisioned. Two components are deliberately stubbed pending the billable account: the real antFarm data-quality service and the Gold refresh.
+**Status:** Prepared and reviewed. The procedures are authored and tested end-to-end against a development database; the Tbaytel account is not yet provisioned. The Gold refresh is implemented — Gold is materialised as dynamic tables refreshed only by the pipeline (see section 8.3). One component remains stubbed pending the billable account: the real antFarm data-quality service.
 
 ---
 
@@ -19,6 +19,7 @@ The framework is **metadata-driven** ("config over code"): a new table to load i
 - **One orchestrator, one call per table.** ADF calls a single wrapper procedure per table; the chain of landing → history → cleanse runs inside Snowflake.
 - **Config over code.** Sources and tables are registered in configuration tables; behaviour (load type, keys, watermark, target) is data.
 - **Fail-closed quality gate.** Gold is refreshed only if every dispatched table succeeded *and* data quality passes. Anything unclear blocks Gold.
+- **Gold is published only by the pipeline.** Gold is materialised as dynamic tables with automatic scheduling disabled, so it changes only when a gated run refreshes it — never on a background clock that could publish half-written or un-gated Silver.
 - **State separate from logs.** One authoritative per-table state table drives the gate and reruns; a separate append-only log holds step-level forensics.
 - **Idempotent and re-runnable.** Re-running the same batch never duplicates data.
 - **The warehouse never fixes source data.** Silver mirrors the source; a duplicate key is a source defect that fails the table, not something the pipeline silently repairs.
@@ -32,7 +33,7 @@ The framework is **metadata-driven** ("config over code"): a new table to load i
 | `BRONZE` | Raw ingested data exactly as loaded from the source extract, per batch, plus lineage columns |
 | `BRONZE_HIST` | Append-only history of every Bronze load — the replay and lineage source |
 | `SILVER` | Deduplicated, keyed, change-tracked business data (hash keys, soft-delete flags) |
-| `GOLD` / `GOLD_{domain}` | Conformed, business-facing dimensions, facts and domain marts |
+| `GOLD` / `GOLD_{domain}` | Conformed, business-facing dimensions and facts (materialised as dynamic tables, refreshed only by the pipeline — see section 8.3) plus per-domain marts |
 | `RAW` | Reserved for a future pattern (semi-structured/JSON landed before Bronze); not used yet |
 | `ADM` | Configuration, run state and logging for the framework itself |
 
@@ -182,7 +183,21 @@ The DQ group, the blocking severity (100, matching TBAY-267 "critical = blocking
 
 ADF calls this once after the table loads. It runs the gate; on PASS it refreshes Gold (`SP_REFRESH_GOLD`) and closes the run `SUCCESS`; on FAIL (or a Gold error) it closes the run `ERROR` and re-raises so the ADF activity fails and alerting fires (the run is durably closed `ERROR` first). The whole gate object, DQ detail included, is written to `PPN_LOG`.
 
-`SP_REFRESH_GOLD` is currently a **stub** (returns success, logs a step) pending the Gold model — it will be implemented with Dynamic Tables or dbt.
+### 8.3 The Gold layer and refresh (`SP_REFRESH_GOLD`)
+
+Gold is the single **publish point** of the platform, and it is deliberately **pipeline-only**: it changes only when a gated run reaches this step.
+
+**How Gold is materialised.** The business-facing star schema is built as Snowflake **dynamic tables** over Silver — for example a partner dimension (`DIM_PARTNER`, from `SILVER.PARTNER_ACCOUNT`, with a hash surrogate key and an "unknown" member) and a usage fact (`FCT_WHOLESALE_USAGE`, from `SILVER.WHOLESALE_USAGE`, with foreign keys to the dimension and to the date dimension). Conformed calendar dimensions (`DIM_DATE`, `DIM_TIME`) are plain static reference tables, since a calendar/clock has no changing base query. Object naming follows the repository's Gold convention `DIM_` / `FCT_` (the TBAY-191 object-naming standard).
+
+**Why pipeline-only, not auto-refresh.** Every Gold dynamic table is created with **`SCHEDULER = DISABLE`**, which removes it from Snowflake's automatic (target-lag) refresh. This is deliberate: the loaders write Silver table-by-table and the DQ gate runs *after* Silver, so a time-lagged background refresh could publish a half-written or un-gated Silver state into Gold. With automatic scheduling off, Gold moves only when `SP_REFRESH_GOLD` runs — i.e. only after the gate has passed. (`TARGET_LAG` cannot be set together with `SCHEDULER = DISABLE`, so it is omitted; `INITIALIZE = ON_CREATE` still populates each table once at deploy.)
+
+**What `SP_REFRESH_GOLD` does.** It (1) **enumerates** the Gold dynamic tables from `INFORMATION_SCHEMA.DYNAMIC_TABLES` for the current database and the `GOLD` schema — nothing is hardcoded, and the static `DIM_DATE` / `DIM_TIME` are excluded automatically because they are not dynamic tables; (2) **refreshes** them in one combined `ALTER DYNAMIC TABLE a, b, c REFRESH`, which Snowflake evaluates at a common data timestamp in dependency order (dimension before fact), so list order does not matter; and (3) **verifies** via `INFORMATION_SCHEMA.DYNAMIC_TABLE_REFRESH_HISTORY` that no Gold table's latest refresh ended `FAILED` / `CANCELLED` / `UPSTREAM_FAILED` (a combined refresh is not all-or-nothing). It keeps the same child-error contract as the loaders — returns `SUCCESS` / `ERROR` (with a message) and does not raise, so a failed refresh makes `SP_FINALIZE_RUN` close the run `ERROR` and re-raise. Adding a new Gold dynamic table needs no change to the procedure, as long as it is created with `SCHEDULER = DISABLE`.
+
+The Gold dynamic tables refresh on the same warehouse the pipeline loads with (`{ENV}_DATA_LOADER_WH`), so Gold-refresh compute is attributed to the load workload.
+
+**Refresh privilege.** Because `SP_REFRESH_GOLD` runs `EXECUTE AS CALLER` and the pipeline calls it as `{ENV}_DATA_LOADER` (ADF's role), that role issues `ALTER DYNAMIC TABLE … REFRESH`, which requires **`OPERATE`** on each Gold dynamic table. This is granted by the access-role framework: `CREATE_SCHEMA` grants `OPERATE` on all present/future dynamic tables to the schema's `_RW_AR` role (and `SELECT` / `MONITOR` to `_RO_AR`), and `{ENV}_DATA_LOADER` holds `FULL_AR` on `GOLD`, which inherits `RW_AR`. (Dynamic tables are a distinct object type, not covered by the schema's `ON ALL/FUTURE TABLES` grants, so they are granted explicitly.) Schemas created before this grant existed are backfilled by `Account Setup/migrations/2026-08-19_dynamic_table_grants_backfill.sql`, run once per environment.
+
+**Domain marts — views over Gold.** The per-domain marts (`GOLD_{domain}`) are exposed as **views over the shared `GOLD` objects**, subset and shaped per domain. A domain reporter reads its mart through Snowflake's **ownership chain**: it has `SELECT` on the view (via the mart's `{schema}_RO_AR`, granted automatically to future views) but no privilege on `GOLD`, and the query succeeds only because the view and the `GOLD` objects share one owner. That owner is **`{ENV}_SYSADMIN`** — it owns the `GOLD` dynamic tables, so the `GOLD_{domain}` **views must also be created as `{ENV}_SYSADMIN`** for the chain to hold. Tag-driven masking still applies through the views (it is evaluated on the querying role, not the view owner). These mart views are not built yet — only the sample star's `GOLD` base objects exist.
 
 ---
 
@@ -224,7 +239,7 @@ Data quality is provided by **antFarm**, In516ht's DQ tooling, deployed account-
 | `SP_LOAD_BRONZE_TO_SILVER` | Cleanse/merge into Silver (hash keys, soft-delete) |
 | `SP_SYNC_TABLE_STRUCTURE` | Reconcile persistent-layer structure to source (add/widen/fail-safe) |
 | `SP_GATE_CHECK` | Pre-Gold gate: table completeness + antFarm DQ |
-| `SP_REFRESH_GOLD` | Refresh Gold (**stub**) |
+| `SP_REFRESH_GOLD` | Refresh the Gold dynamic tables in one combined refresh, then verify (pipeline publish point) |
 | `SP_FINALIZE_RUN` | Gate → Gold → close, one run-level call |
 | `SP_DQ_EXECUTE` / `SP_DQ_RESULT` / `SP_SEND_NOTIFICATION` | antFarm DQ execution, result read, notification |
 | `SP_LOG_STEP` / `SP_SET_PROCESS_STATE` / `SP_CLOSE_PPN` | Helpers: step log, state upsert, run close |
@@ -235,14 +250,14 @@ Supporting the framework: the shared Parquet file format (`PLATFORM_DB.FILE_FORM
 
 ## 12. Build status and pending work
 
-**Built and tested end-to-end on a development database:** the full create → validate → per-table load → finalize path, including both loaders, change detection, history, Silver merge/soft-delete, structure sync, the DQ-aware gate and finalize, and the standalone DQ procedure set (against the antFarm stub).
+**Built and tested end-to-end on a development database:** the full create → validate → per-table load → finalize path, including both loaders, change detection, history, Silver merge/soft-delete, structure sync, the DQ-aware gate and finalize, and the standalone DQ procedure set (against the antFarm stub). The Gold layer is implemented as pipeline-refreshed dynamic tables via `SP_REFRESH_GOLD`, with a worked star-schema example (a partner dimension and a wholesale-usage fact over the Silver WHOLESALE path) plus the conformed `DIM_DATE` / `DIM_TIME` calendar dimensions.
 
 **Retired:** a separate `SP_RUN_DQ_CHECKS` was never built — DQ moved inside the gate so there is one invoker and one judge.
 
 **Pending:**
 
 - **Real antFarm on SPCS** — needs the billed account; currently stubbed.
-- **`SP_REFRESH_GOLD`** — real Gold refresh (Dynamic Tables / dbt) once the Gold model exists.
+- **Production Gold model** — the refresh mechanism is built and demonstrated on a sample star; the full Gold model across the business domains (`GOLD`), and the `GOLD_{domain}` mart views over it (owned by `{ENV}_SYSADMIN`), are still to be built.
 - **`SP_REPLAY_FROM_HIST`** — a recovery procedure to rebuild Silver from history.
 - **Azure external stage** — the real Blob external stage over Private Link (currently an internal stand-in).
 - **PPN-scoped file folders in production** — the agreed ADF path contract `<stage>/{source}/{table}/{ppn_id}/` must be produced by ADF for input immutability.

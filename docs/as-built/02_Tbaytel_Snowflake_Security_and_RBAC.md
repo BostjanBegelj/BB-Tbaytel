@@ -85,9 +85,21 @@ A common point of confusion, resolved by design:
 - `{ENV}_REPORTER` is a **human** role, read on the shared `GOLD` schema only.
 - `{ENV}_REPORTER_{domain}` are **human** roles, one per domain mart.
 
-Access is **additive**: a person can hold `{ENV}_REPORTER` plus one or more domain-reporter roles at once. This requires `DEFAULT_SECONDARY_ROLES = 'ALL'` on the user (see section 5.3). There is no hierarchy linking domain reporters to `{ENV}_REPORTER` — they are parallel, and access is granted per schema. Domain reporters do not get access to the shared `GOLD` schema; conformed dimensions reach a mart as **views over `GOLD`** relying on Snowflake's ownership chain, so the reporter needs `SELECT` on the view but no privilege on `GOLD` (the Gold table and the view must be created by the same role — `{ENV}_DEPLOYER`).
+Access is **additive**: a person can hold `{ENV}_REPORTER` plus one or more domain-reporter roles at once. This requires `DEFAULT_SECONDARY_ROLES = 'ALL'` on the user (see section 5.3). There is no hierarchy linking domain reporters to `{ENV}_REPORTER` — they are parallel, and access is granted per schema. Domain reporters do not get access to the shared `GOLD` schema; conformed dimensions and facts reach a mart as **views over `GOLD`**, described in section 3.6.
 
-### 3.6 The access-role pattern
+### 3.6 The `GOLD_{domain}` marts — views over `GOLD` and the ownership chain
+
+Each `GOLD_{domain}` mart is populated with **views over the shared `GOLD` objects**, subset and shaped for that domain. This relies on Snowflake's **ownership chain**: a domain reporter holds `SELECT` on the view (through `{schema}_RO_AR`) but has **no** privilege on `GOLD`, and the query still succeeds — provided the view and the `GOLD` objects it reads are **owned by the same role**. If the owners differ, the chain is broken and the reporter is refused.
+
+The single owner for the whole `GOLD` layer is **`{ENV}_SYSADMIN`** — it owns the `GOLD` dynamic tables (the base objects), so the `GOLD_{domain}` **views must also be created as `{ENV}_SYSADMIN`** for the chain to hold. Other roles (`{ENV}_DEPLOYER`, `{ENV}_TRANSFORMER`, `{ENV}_DATA_LOADER`) hold `FULL` on the marts and *could* create objects there, but a view they create over `SYSADMIN`-owned `GOLD` tables would break the chain, so mart views are standardised on `{ENV}_SYSADMIN`.
+
+Two things make this work with no extra per-view effort, and one requires a grant:
+
+- **No per-view grant needed.** `CREATE_SCHEMA` grants `SELECT ON FUTURE VIEWS … TO {schema}_RO_AR`, and the domain reporter holds `RO_AR`, so a new mart view is automatically readable by that domain's reporter.
+- **Masking is preserved.** Tag-driven masking is evaluated on the *querying* role, not the view owner, so a reporter reading through a `SYSADMIN`-owned view still sees masked PII, and `PII_READER` still sees clear values.
+- **Refresh privilege (handled by the framework).** The pipeline refreshes the `GOLD` dynamic tables as `{ENV}_DATA_LOADER` (ADF's role), which requires `OPERATE` on each dynamic table. `CREATE_SCHEMA` grants `OPERATE` on all present and future dynamic tables to the schema's `_RW_AR` access role (and `SELECT` + `MONITOR` to `_RO_AR`); because `DATA_LOADER` holds `FULL_AR` on `GOLD` — which inherits `RW_AR` — it can refresh, while reporters (`RO_AR` only) cannot. Dynamic tables are a distinct object type not covered by the schema's `ON ALL/FUTURE TABLES` grants, which is why they are granted explicitly. Schemas created before this grant was added are brought up to date by a one-off migration (`Account Setup/migrations/2026-08-19_dynamic_table_grants_backfill.sql`), run once per environment.
+
+### 3.7 The access-role pattern
 
 Each schema is created with three database roles that carry the actual object privileges:
 
@@ -225,6 +237,8 @@ The access model is verified after deployment by the validation layer: an object
 - **SCIM token and Entra group names** — generated/confirmed at provisioning; group naming owned Azure-side.
 - **Network/auth policy activation** — deliberately deferred until access is verified.
 - **`PII_READER` and tag-application grants** — applied per environment after its roles exist.
+- **`GOLD_{domain}` mart views** — the marts are exposed as views over `GOLD`, owned by `{ENV}_SYSADMIN` so the ownership chain lets domain reporters read without any `GOLD` privilege (see section 3.6). The views are not built yet.
+- **GOLD dynamic-table refresh privilege** — resolved: `CREATE_SCHEMA` now grants `OPERATE` on dynamic tables to `_RW_AR` (so `DATA_LOADER`, via `FULL_AR`, can refresh) and `SELECT`/`MONITOR` to `_RO_AR`. Existing schemas are brought up to date by the backfill migration noted in section 3.6; the only remaining action is to run that migration per environment.
 
 ---
 

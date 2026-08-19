@@ -19,7 +19,7 @@ Blend has designed and built the foundation of Tbaytel's Snowflake data platform
 
 **An enterprise access model tied to Microsoft Entra ID.** People sign in with corporate single sign-on and are placed into roles automatically from their Entra group membership; Snowflake owns what each role can do, Entra owns who is in it. Access follows least privilege, is aligned to Tbaytel's business domains, and separates human users from the service accounts that run the pipeline. A complete data-protection framework — data classification, automatic PII masking driven by column tags, and row-level access — is built and ready, so sensitive data is protected the moment it is tagged.
 
-**A robust, automated data pipeline.** Ingestion is orchestrated by Azure Data Factory and executed by Snowflake procedures. It is configuration-driven — adding a new table is a configuration entry, not new code — and supports both file-based and database/data-share sources. Every load is tracked, logged and re-runnable, and a **quality gate** sits in front of the Gold layer: business-ready data is published only when every table has loaded successfully *and* the data passes automated quality checks. If either fails, the run stops before Gold and raises an alert.
+**A robust, automated data pipeline.** Ingestion is orchestrated by Azure Data Factory and executed by Snowflake procedures. It is configuration-driven — adding a new table is a configuration entry, not new code — and supports both file-based and database/data-share sources. Every load is tracked, logged and re-runnable, and a **quality gate** sits in front of the Gold layer: business-ready data is published only when every table has loaded successfully *and* the data passes automated quality checks. If either fails, the run stops before Gold and raises an alert. The Gold layer itself is built as dynamic tables that refresh **only** when a gated run completes, so nothing un-checked ever reaches reporting.
 
 **Cost control and monitoring from day one.** Compute is separated by workload so spend is attributable, warehouses cost nothing when idle, an account-level guard-rail caps credit consumption, and monitoring views report credit usage and access grants.
 
@@ -35,7 +35,7 @@ Blend has designed and built the foundation of Tbaytel's Snowflake data platform
 | Medallion schemas and warehouses | Prepared and reviewed |
 | End-to-end ETL procedures (Bronze → Silver) | Built and tested end-to-end on a development database |
 | Quality gate + data-quality integration | Built (running against a stubbed quality service) |
-| Gold refresh | Stubbed — pending the Gold data model |
+| Gold layer & refresh | Built — Gold as pipeline-refreshed dynamic tables; a sample star and conformed calendar dimensions in place. Full per-domain Gold model still to be built |
 | Client Snowflake account | Not yet provisioned |
 
 ---
@@ -48,7 +48,7 @@ None of these block the review; they are what turns the prepared build into a ru
 - **Tbaytel corporate network ranges** — required before the network security policy can be switched on; today it holds a safe placeholder and is intentionally inactive.
 - **Private Link endpoint details** — the private-connectivity approach is decided; the specific endpoints are configured on the client account, after which public access is closed off.
 - **Data-quality service (antFarm)** — the production service needs the billed account to run; it is currently stubbed so the pipeline and gate work end to end in the meantime.
-- **Gold data model** — the Gold refresh step is a placeholder until the target Gold model is defined (to be built with Dynamic Tables or dbt).
+- **Production Gold model** — the Gold refresh mechanism is built (dynamic tables, refreshed only by the pipeline); the full Gold model across the business domains is still to be defined and built.
 
 ---
 
@@ -57,7 +57,7 @@ None of these block the review; they are what turns the prepared build into a ru
 1. Provision the client account and execute the prepared account and environment scripts (Development first).
 2. Obtain the Tbaytel network ranges and Private Link details; activate the network and authentication policies after verifying access.
 3. Stand up antFarm on the billed account and connect the quality gate to the real service.
-4. Define the Gold data model and implement the Gold refresh.
+4. Define and build the production Gold data model across the business domains — the refresh mechanism is already in place.
 
 ---
 
