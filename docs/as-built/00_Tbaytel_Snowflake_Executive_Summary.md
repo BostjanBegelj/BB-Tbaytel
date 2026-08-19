@@ -47,10 +47,8 @@ None of these block the review; they are what turns the prepared build into a ru
 - **Provision the Tbaytel Snowflake account** (Business Critical, Canada Central) — everything else follows from this.
 - **Tbaytel corporate network ranges** — required before the network security policy can be switched on; today it holds a safe placeholder and is intentionally inactive.
 - **Private Link endpoint details** — the private-connectivity approach is decided; the specific endpoints are configured on the client account, after which public access is closed off.
-- **Disaster-recovery posture** — a decision is still open between next-business-day rebuild and active replication, complicated by there being a single Canadian Azure region.
 - **Data-quality service (antFarm)** — the production service needs the billed account to run; it is currently stubbed so the pipeline and gate work end to end in the meantime.
 - **Gold data model** — the Gold refresh step is a placeholder until the target Gold model is defined (to be built with Dynamic Tables or dbt).
-- **Occupational Health data** — this special-category (health) data is deliberately walled off (role and schema exist, no access, no data) pending sign-off from Tbaytel's privacy function.
 
 ---
 
@@ -60,7 +58,6 @@ None of these block the review; they are what turns the prepared build into a ru
 2. Obtain the Tbaytel network ranges and Private Link details; activate the network and authentication policies after verifying access.
 3. Stand up antFarm on the billed account and connect the quality gate to the real service.
 4. Define the Gold data model and implement the Gold refresh.
-5. Confirm the disaster-recovery posture and the Occupational Health data decision with Tbaytel.
 
 ---
 

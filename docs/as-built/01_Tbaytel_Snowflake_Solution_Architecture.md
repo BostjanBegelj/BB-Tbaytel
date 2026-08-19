@@ -131,8 +131,6 @@ The Gold domain marts implement the client's Data Domain Map — five Tier-1 dom
 
 Each Tier-2 domain maps to a `GOLD_{domain}` schema and a matching domain-reporter role. This is an ownership/stewardship map; it does not imply that all 13 marts carry data from day one. In Phase 1 only a subset of sources is ingested, so several marts will initially be empty schemas that exist so the access model and Entra mapping are complete.
 
-**Occupational Health** is special-category (medical) personal data: the schema and role exist for completeness, but no data is loaded and no access is granted to it until handling is agreed with Tbaytel's privacy function.
-
 ---
 
 ## 6. Roles and warehouses (architecture view)
@@ -252,10 +250,8 @@ Every deployment is checked by the validation layer:
 - The Tbaytel Snowflake account is not yet provisioned — nothing is deployed to a client environment.
 - **Network policy IP ranges** — Tbaytel corporate ranges not yet supplied; the ingress policy carries a placeholder and must not be activated until the real ranges are in.
 - **Private Link** — decided; endpoint identifiers to be filled in on the billable account, after which public access is blocked.
-- **DR posture** — next-business-day rebuild vs replication is still open, complicated by the single Canadian Azure region.
 - **antFarm on Snowpark Container Services** — requires the billed account (compute pools are unavailable on trial); currently stubbed.
 - **`SP_REFRESH_GOLD`** — the Gold refresh is a stub pending the Gold model (Dynamic Tables / dbt).
-- **Occupational Health** data handling — pending privacy sign-off.
 
 ---
 

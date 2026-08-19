@@ -224,7 +224,6 @@ The access model is verified after deployment by the validation layer: an object
 - **SSO values and Private Link URLs** — SSO integration stays gated until these are final.
 - **SCIM token and Entra group names** — generated/confirmed at provisioning; group naming owned Azure-side.
 - **Network/auth policy activation** — deliberately deferred until access is verified.
-- **Occupational Health** (special-category health data) — role and schema exist but no access is granted and no data is loaded until Tbaytel's privacy function signs off.
 - **`PII_READER` and tag-application grants** — applied per environment after its roles exist.
 
 ---
