@@ -382,5 +382,4 @@ SELECT
     , -1                    AS WEEKISO_OF_YEAR_NUMBER
     , -1                    AS MONTH_OF_YEAR_NUMBER
     , -1                    AS QUARTER_OF_YEAR_NUMBER
-    , -1                    AS IS_SEASON
 ;
