@@ -314,14 +314,6 @@ SELECT
     , TO_NUMBER(YEAR(D.MY_DATE) || LPAD(MONTH(D.MY_DATE)::VARCHAR, 2, '0'))                AS MONTH_OF_YEAR_NUMBER
     , TO_NUMBER(YEAR(D.MY_DATE) || LPAD(QUARTER(D.MY_DATE)::VARCHAR, 2, '0'))              AS QUARTER_OF_YEAR_NUMBER
 
-      /* season */
-    , IFF(
-          D.MY_DATE BETWEEN TO_DATE(YEAR(D.MY_DATE) || '-04-15')
-                      AND TO_DATE(YEAR(D.MY_DATE) || '-09-30'),
-          1,
-          0
-      )                                                                                    AS IS_SEASON
-
 FROM CTE_MY_DATE D
 LEFT JOIN (SELECT DATE, LISTAGG(DISTINCT HOLIDAY_NAME, ', ') WITHIN GROUP (ORDER BY HOLIDAY_NAME) AS HOLIDAY_NAME
              FROM HOL GROUP BY DATE) H
