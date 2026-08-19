@@ -12,12 +12,15 @@
 -- Measures   : UNITS, AMOUNT (additive) + AMOUNT_PER_UNIT (non-additive ratio)
 -- Filter     : IS_DELETED = FALSE.
 --
--- Refresh    : Dynamic Table. TARGET_LAG = '1 hour' - Snowflake keeps it within
---              an hour of SILVER automatically, and it drives the DOWNSTREAM
---              refresh of DIM_PARTNER. A pipeline step (SP_REFRESH_GOLD) can also
---              force it immediately with:
---                 ALTER DYNAMIC TABLE GOLD.FCT_WHOLESALE_USAGE REFRESH;
---              which cascades to its upstream DOWNSTREAM dimension.
+-- Refresh    : Dynamic Table, PIPELINE-ONLY. SCHEDULER = DISABLE removes it from
+--              automatic background refresh; ADM.SP_REFRESH_GOLD refreshes it (and
+--              DIM_PARTNER) after the DQ gate PASSes, so GOLD never publishes
+--              ungated data. TARGET_LAG is absent (not allowed with
+--              SCHEDULER = DISABLE). INITIALIZE = ON_CREATE populates it at deploy.
+--              SP_REFRESH_GOLD issues one combined statement over all GOLD dynamic
+--              tables, which Snowflake refreshes at a common data timestamp in
+--              dependency order (dim before fact) - so this fact always sees a
+--              consistent DIM_PARTNER.
 --
 -- WAREHOUSE NOTE: see DIM_PARTNER.sql - DEV_DATA_LOADER_WH (the ETL load
 --   warehouse); the owning role needs USAGE on it.
@@ -28,11 +31,11 @@ use database dev_db;
 use schema gold;
 
 CREATE OR REPLACE DYNAMIC TABLE GOLD.FCT_WHOLESALE_USAGE
-    TARGET_LAG   = '1 hour'
+    SCHEDULER    = DISABLE            -- pipeline-only refresh; no automatic background refresh
     WAREHOUSE    = DEV_DATA_LOADER_WH
     REFRESH_MODE = AUTO
     INITIALIZE   = ON_CREATE
-    COMMENT      = 'Wholesale usage fact from SILVER.WHOLESALE_USAGE; FKs to DIM_PARTNER and DIM_DATE.'
+    COMMENT      = 'Wholesale usage fact from SILVER.WHOLESALE_USAGE; FKs to DIM_PARTNER and DIM_DATE. Pipeline-refreshed (SCHEDULER=DISABLE).'
 AS
 SELECT
       f.USAGE_ID                                          AS USAGE_ID        -- degenerate dimension

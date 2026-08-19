@@ -47,15 +47,31 @@ Naming follows the repo's Gold convention `DIM_` / `FCT_` (per the TBAY-191
 
 `DIM_PARTNER` must exist before `FCT_WHOLESALE_USAGE` (the fact reads it).
 
-## Refresh model
+## Refresh model — pipeline-only
 
-- `DIM_PARTNER` → `TARGET_LAG = DOWNSTREAM`: refreshes only as needed by the fact.
-- `FCT_WHOLESALE_USAGE` → `TARGET_LAG = '1 hour'`: Snowflake keeps it within an hour
-  of SILVER and drives the dimension refresh in dependency order.
-- **Pipeline-driven:** `ADM.SP_REFRESH_GOLD(ppn_id)` (called by `SP_FINALIZE_RUN`
-  after the gate PASSes) now issues `ALTER DYNAMIC TABLE ... REFRESH` on
-  `DIM_PARTNER` then `FCT_WHOLESALE_USAGE` — so a run refreshes GOLD on demand,
-  independent of the lag clock. `DIM_DATE` / `DIM_TIME` are static — not refreshed.
+GOLD is refreshed **only** by the pipeline, never on a background clock. Both
+dynamic tables are created with **`SCHEDULER = DISABLE`**, which removes them from
+Snowflake's automatic refresh (directly and via any downstream). Because
+`TARGET_LAG` cannot be set together with `SCHEDULER = DISABLE`, it is omitted;
+`INITIALIZE = ON_CREATE` still populates each table once at deploy time.
+
+Why: our loaders write SILVER table-by-table and the DQ gate runs *after* SILVER.
+A time-lagged auto-refresh could publish a half-written or un-gated SILVER into
+GOLD. Pipeline-only refresh closes that — GOLD moves only when a gated run says so.
+
+`ADM.SP_REFRESH_GOLD(ppn_id)` (called by `SP_FINALIZE_RUN` after the gate PASSes):
+
+1. **Enumerates** the GOLD dynamic tables from `INFORMATION_SCHEMA.DYNAMIC_TABLES`
+   (nothing hardcoded; `DIM_DATE` / `DIM_TIME` are excluded automatically because
+   they are plain tables). Uses `CURRENT_DATABASE()`, so it is environment-agnostic.
+2. **Refreshes** them in one combined `ALTER DYNAMIC TABLE a, b, c REFRESH` —
+   Snowflake refreshes the set at a common data timestamp, dimension before fact,
+   so ordering the list is unnecessary.
+3. **Verifies** via `INFORMATION_SCHEMA.DYNAMIC_TABLE_REFRESH_HISTORY` that no
+   GOLD table's latest refresh ended `FAILED` / `CANCELLED` / `UPSTREAM_FAILED`
+   (a combined refresh is not all-or-nothing), and fails the run if any did.
+
+`DIM_DATE` / `DIM_TIME` are static reference tables — built once, never refreshed.
 
 ## SP_REFRESH_GOLD wiring
 
@@ -63,7 +79,10 @@ Replaces the old no-op stub at `etl_build/PROCEDURES/SP_REFRESH_GOLD.sql`.
 Same contract `SP_FINALIZE_RUN` already expects: returns `status = 'SUCCESS' | 'ERROR'`
 (+ `message` on failure) and does **not** raise — a failed refresh makes
 `SP_FINALIZE_RUN` close the run `ERROR` and re-raise, exactly like the loaders.
-To add another GOLD dynamic table, copy a refresh block (dimensions before facts).
+Adding a GOLD dynamic table needs **no** change to the procedure — it is picked up
+by the enumeration automatically (just create it with `SCHEDULER = DISABLE`).
+
+`SCHEDULER = DISABLE` is a GA dynamic-table attribute (Snowflake, 2026-03-26).
 
 ## Warehouse
 

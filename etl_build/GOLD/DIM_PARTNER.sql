@@ -10,10 +10,14 @@
 --              partner still resolve to a row (no lost fact rows in a join).
 -- Filter     : IS_DELETED = FALSE - soft-deleted partners drop out of the dim.
 --
--- Refresh    : Dynamic Table. TARGET_LAG = DOWNSTREAM means it refreshes only as
---              needed to satisfy its downstream fact (FCT_WHOLESALE_USAGE), so a
---              manual/scheduled refresh of the fact cascades to this dim in the
---              right order.
+-- Refresh    : Dynamic Table, PIPELINE-ONLY. SCHEDULER = DISABLE removes it from
+--              Snowflake's automatic background refresh (directly and via any
+--              downstream), so GOLD only ever changes when the pipeline says so -
+--              ADM.SP_REFRESH_GOLD runs a manual refresh after the DQ gate PASSes.
+--              This keeps GOLD from publishing data that has not passed the gate.
+--              TARGET_LAG is intentionally absent - it cannot be set with
+--              SCHEDULER = DISABLE. INITIALIZE = ON_CREATE still populates the
+--              table once at deploy time.
 --
 -- WAREHOUSE NOTE: DEV_DATA_LOADER_WH - the same warehouse the ETL pipeline uses to
 --   load data, so GOLD refresh compute is attributed to the load workload. The
@@ -27,11 +31,11 @@ use database dev_db;
 use schema gold;
 
 CREATE OR REPLACE DYNAMIC TABLE GOLD.DIM_PARTNER
-    TARGET_LAG   = 'DOWNSTREAM'
+    SCHEDULER    = DISABLE            -- pipeline-only refresh; no automatic background refresh
     WAREHOUSE    = DEV_DATA_LOADER_WH
     REFRESH_MODE = AUTO
     INITIALIZE   = ON_CREATE
-    COMMENT      = 'Partner dimension from SILVER.PARTNER_ACCOUNT; PARTNER_HK surrogate + unknown member.'
+    COMMENT      = 'Partner dimension from SILVER.PARTNER_ACCOUNT; PARTNER_HK surrogate + unknown member. Pipeline-refreshed (SCHEDULER=DISABLE).'
 AS
 SELECT
       s.PK_HK                                   AS PARTNER_HK      -- surrogate (hash) key
