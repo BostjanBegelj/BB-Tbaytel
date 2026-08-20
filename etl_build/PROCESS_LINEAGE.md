@@ -73,7 +73,7 @@ sequenceDiagram
 | 5a | ADF → SRC/Blob | *(FILE sources only)* Copy activity: extract source → file(s) in Blob | source | Blob |
 | 6 | ADF → SF | `SP_RUN_TABLE_LOAD(PPN_ID, SOURCE_ID, TABLE)` — wraps landing (file/share) → check-change → HIST → SILVER; SKIP if identical | config, `BRONZE`, `BRONZE_HIST` | `BRONZE`/`BRONZE_HIST`/`SILVER`, `PPN_PROCESS`, `PPN_LOG` |
 | — | | **Run level (after all tables):** | | |
-| 7 | ADF → SF | `SP_FINALIZE_RUN(PPN_ID, EXPECTED_COUNT)` — gate → GOLD (if pass) → close; returns SUCCESS or re-raises. The gate runs antFarm DQ itself (`SP_GATE_CHECK` → `SP_DQ_EXECUTE`, group `DQ_SILVER`, blocking severity 100 — both fixed in the procedure), so there is **no separate DQ activity**. `EXPECTED_COUNT` = the step-4 item count (`@length(...)`), the only completeness proof Snowflake can have. `SP_REFRESH_GOLD` currently a **stub** | `PPN_PROCESS`,`SILVER`,`PLATFORM_DB.ANTFARM.DQ_LOG` | `ADM.PPN` final, `GOLD`/`GOLD_{domain}`, `PPN_LOG` |
+| 7 | ADF → SF | `SP_FINALIZE_RUN(PPN_ID, EXPECTED_COUNT)` — gate → GOLD (if pass) → close; returns SUCCESS or re-raises. The gate runs antFarm DQ itself (`SP_GATE_CHECK` → `SP_DQ_EXECUTE`, group `DQ_SILVER`, blocking severity 100 — both fixed in the procedure), so there is **no separate DQ activity**. `EXPECTED_COUNT` = the step-4 item count (`@length(...)`), the only completeness proof Snowflake can have. `SP_REFRESH_GOLD` refreshes the GOLD dynamic tables (pipeline-only — see the GOLD-refresh note under Cross-cutting behavior) | `PPN_PROCESS`,`SILVER`,`PLATFORM_DB.ANTFARM.DQ_LOG` | `ADM.PPN` final, `GOLD`/`GOLD_{domain}`, `PPN_LOG` |
 | 8 | ADF → SF | `SP_CLOSE_PPN(PPN_ID, ERROR)` — **only for early aborts** (validate/loop failures before finalize) | `ADM.PPN` | `ADM.PPN` final, `PPN_LOG` |
 | 9 | ADF | On any failure: one alert; failed activity surfaces in monitoring | — | — |
 
@@ -117,6 +117,19 @@ status per table for its own alerting.)
   execution holds a warehouse for the whole poll. The gate is therefore no longer a pure read; the
   full DQ object comes back inside the gate result and `SP_FINALIZE_RUN` writes it to `PPN_LOG`.
   The ADF activity timeout on finalize must exceed `SP_DQ_EXECUTE`'s `P_TIMEOUT_S` (3600s).
+- **GOLD refresh (pipeline-only):** GOLD is materialised as **dynamic tables** created with
+  `SCHEDULER = DISABLE` (no background / target-lag refresh), so GOLD changes only when a gated run
+  calls `SP_REFRESH_GOLD` — never on a clock that could publish un-gated SILVER. `SP_REFRESH_GOLD`
+  enumerates the GOLD dynamic tables from `INFORMATION_SCHEMA.DYNAMIC_TABLES` (nothing hardcoded),
+  refreshes them in ONE combined `ALTER DYNAMIC TABLE a, b, c REFRESH` (common data timestamp,
+  dependency order), then VERIFIES via `DYNAMIC_TABLE_REFRESH_HISTORY` that none ended
+  `FAILED`/`CANCELLED`/`UPSTREAM_FAILED` (a combined refresh is not all-or-nothing). Same child-error
+  contract as the loaders — returns `SUCCESS`/`ERROR`, does not raise. It runs as the caller
+  (`{ENV}_DATA_LOADER`), which holds `OPERATE` on the dynamic tables via `FULL_AR → RW_AR`
+  (`CREATE_SCHEMA` grants `OPERATE` on all/future dynamic tables to `RW_AR`). The `GOLD_{domain}`
+  marts are **views over GOLD** owned by `{ENV}_SYSADMIN` (same owner as the GOLD dynamic tables), so
+  a domain reporter reads its mart through the ownership chain with no privilege on GOLD. Static
+  `DIM_DATE`/`DIM_TIME` are plain tables and are not refreshed.
 - **Who proves completeness:** because rows are created on first touch, the gate alone proves only
   *"nothing that ran failed"*. Snowflake cannot know the intended list — ADF owns it. So ADF passes
   its ForEach item count into `SP_FINALIZE_RUN`, and the gate FAILs on `reported < expected`. A
@@ -138,19 +151,24 @@ status per table for its own alerting.)
 
 ---
 
-## Build status (2026-08-13)
+## Build status (2026-08-19)
 
 **Built:** `SP_CREATE_PPN`, `SP_VALIDATE_CONFIG`, `SP_RUN_TABLE_LOAD` (wrapper),
 `SP_LOAD_FILE_TO_BRONZE`, `SP_LOAD_DATABASE_TO_BRONZE`, `SP_CHECK_DATA_CHANGE`,
 `SP_LOAD_BRONZE_TO_HIST`, `SP_LOAD_BRONZE_TO_SILVER`, `SP_SYNC_TABLE_STRUCTURE`,
-`SP_GATE_CHECK` (now DQ-aware), `SP_FINALIZE_RUN`, `SP_REFRESH_GOLD` (**stub**), the standalone DQ
+`SP_GATE_CHECK` (now DQ-aware), `SP_FINALIZE_RUN`, `SP_REFRESH_GOLD` (real — refreshes the GOLD
+dynamic tables), the standalone DQ
 set `SP_DQ_EXECUTE` / `SP_DQ_RESULT` / `SP_SEND_NOTIFICATION`, helpers `SP_LOG_STEP` /
 `SP_SET_PROCESS_STATE`, `SP_CLOSE_PPN`. (Loaders + run-control tested on DEV; gate/finalize and the
 DQ set newly built. antFarm itself is still stubbed under `PLATFORM_DB.ANTFARM` — see
-`Account Setup/antfarm/`.)
+`Account Setup/antfarm/`.) GOLD dynamic tables (`DIM_PARTNER`, `FCT_WHOLESALE_USAGE`) + static
+`DIM_DATE`/`DIM_TIME` built under `etl_build/GOLD/`; `CREATE_SCHEMA` now grants `OPERATE` on dynamic
+tables to `RW_AR` so `{ENV}_DATA_LOADER` can refresh (backfill migration for pre-existing schemas
+under `Account Setup/migrations/`), verified on DEV.
 
-**Pending:** real antFarm on SPCS (needs the billed account), real `SP_REFRESH_GOLD`
-implementation (Dynamic Tables / dbt), `SP_REPLAY_FROM_HIST` (recovery).
+**Pending:** real antFarm on SPCS (needs the billed account); the **production GOLD model** across
+the business domains and the `GOLD_{domain}` mart views over it (the refresh mechanism is built and
+demonstrated on the sample WHOLESALE star); `SP_REPLAY_FROM_HIST` (recovery).
 
 **Retired:** `SP_RUN_DQ_CHECKS` was never built — DQ moved inside `SP_GATE_CHECK` instead, so
 there is one invoker and one judge rather than a separate procedure whose verdict the gate re-read
