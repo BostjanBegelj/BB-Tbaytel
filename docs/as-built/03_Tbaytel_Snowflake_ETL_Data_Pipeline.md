@@ -152,6 +152,20 @@ Silver is metadata-driven. Business columns are all Bronze columns except the li
 
 `SP_SYNC_TABLE_STRUCTURE` reconciles the persistent layers (history, Silver) to the source shape before writing: it adds source columns missing in the target, widens columns where Snowflake permits (longer VARCHAR, higher NUMBER precision at equal scale), and **fails safe** on incompatible changes (different base type, changed scale, changed date/time precision) rather than risk silent data loss. Every structural change is logged. Bronze self-heals because it is rebuilt each run.
 
+### 7.3 Recovery and reprocessing (`SP_REPLAY_FROM_HIST`)
+
+Bronze is transient — each load replaces it, so it only ever holds the current batch. Silver, by contrast, is *stateful*: it is built one batch at a time, accumulating change detection, soft-delete flags and load timestamps. The only durable, replayable record of the full history is therefore `BRONZE_HIST`. `SP_REPLAY_FROM_HIST` is the recovery / reprocessing procedure that rebuilds `SILVER.<table>` from that history.
+
+It reuses the production cleanse logic unchanged: for each stored batch (`PPN_ID`) in ascending order it stages that snapshot back into Bronze and calls `SP_LOAD_BRONZE_TO_SILVER` for it, preserving the original `PPN_ID` so Silver's lineage and each snapshot's log rows stay attached to the batch they belong to. Replaying batch-by-batch in order is essential — collapsing all history into one merge would break full-load delete detection and pick arbitrary row versions. The replay operation opens its own run (`PPN_ID`), so it is auditable end to end (a plan row plus one step row per replayed batch).
+
+It is an **operator-run, out-of-band** procedure — deliberately not part of the ADF nightly flow — for:
+
+- a Silver transformation or hash-formula change: rebuild the whole history under the new rules (a normal run would only re-apply the latest batch, silently losing history and mis-detecting deletes);
+- corruption, an accidental drop or a bad manual change discovered outside the Silver Time Travel window: Bronze history is the long-lived truth, and unlike Time Travel it re-derives Silver with the **current** logic rather than restoring the same possibly-defective output;
+- a schema change to apply across all history, seeding Silver for a table previously kept only in history, or a point-in-time / environment rebuild.
+
+Two modes: a **full rebuild** (default) drops Silver and replays the whole history; an **in-place replay** of a bounded batch window (`P_FROM_PPN` / `P_TO_PPN`) against an existing Silver, for resume/backfill. A point-in-time rebuild "as of batch N" uses the upper bound alone. Guards keep it safe to run: an empty window leaves Silver untouched (it never drops-then-leaves-empty), and a table without exactly one active configuration row is refused — it reads configuration exactly as the load path does. It is **not atomic across batches** (DDL commits per step and each snapshot applies atomically inside the Silver load), so a mid-replay failure leaves Silver rebuilt through the last good batch and the procedure is simply re-run.
+
 ---
 
 ## 8. The pre-Gold quality gate
@@ -241,6 +255,7 @@ Data quality is provided by **antFarm**, In516ht's DQ tooling, deployed account-
 | `SP_GATE_CHECK` | Pre-Gold gate: table completeness + antFarm DQ |
 | `SP_REFRESH_GOLD` | Refresh the Gold dynamic tables in one combined refresh, then verify (pipeline publish point) |
 | `SP_FINALIZE_RUN` | Gate → Gold → close, one run-level call |
+| `SP_REPLAY_FROM_HIST` | Recovery (out-of-band): rebuild Silver from Bronze history by replaying batches in order — section 7.3 |
 | `SP_DQ_EXECUTE` / `SP_DQ_RESULT` / `SP_SEND_NOTIFICATION` | antFarm DQ execution, result read, notification |
 | `SP_LOG_STEP` / `SP_SET_PROCESS_STATE` / `SP_CLOSE_PPN` | Helpers: step log, state upsert, run close |
 
@@ -252,13 +267,14 @@ Supporting the framework: the shared Parquet file format (`PLATFORM_DB.FILE_FORM
 
 **Built and tested end-to-end on a development database:** the full create → validate → per-table load → finalize path, including both loaders, change detection, history, Silver merge/soft-delete, structure sync, the DQ-aware gate and finalize, and the standalone DQ procedure set (against the antFarm stub). The Gold layer is implemented as pipeline-refreshed dynamic tables via `SP_REFRESH_GOLD`, with a worked star-schema example (a partner dimension and a wholesale-usage fact over the Silver WHOLESALE path) plus the conformed `DIM_DATE` / `DIM_TIME` calendar dimensions.
 
+**Built, DEV validation pending:** the recovery / reprocessing procedure `SP_REPLAY_FROM_HIST` (section 7.3) is authored and ships with a DEV test script (`TESTS/test_replay_from_hist.sql`); it has not yet been executed against the database.
+
 **Retired:** a separate `SP_RUN_DQ_CHECKS` was never built — DQ moved inside the gate so there is one invoker and one judge.
 
 **Pending:**
 
 - **Real antFarm on SPCS** — needs the billed account; currently stubbed.
 - **Production Gold model** — the refresh mechanism is built and demonstrated on a sample star; the full Gold model across the business domains (`GOLD`), and the `GOLD_{domain}` mart views over it (owned by `{ENV}_SYSADMIN`), are still to be built.
-- **`SP_REPLAY_FROM_HIST`** — a recovery procedure to rebuild Silver from history.
 - **Azure external stage** — the real Blob external stage over Private Link (currently an internal stand-in).
 - **PPN-scoped file folders in production** — the agreed ADF path contract `<stage>/{source}/{table}/{ppn_id}/` must be produced by ADF for input immutability.
 

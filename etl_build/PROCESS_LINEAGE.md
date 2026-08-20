@@ -148,6 +148,17 @@ status per table for its own alerting.)
   re-raise so the ADF activity fails and alerting fires.
 - **Idempotency:** re-running the same `PPN_ID` never duplicates — HIST delete-then-insert per PPN,
   SILVER MERGE keyed by `PK_HK`.
+- **Recovery / reprocessing (out of band):** `SP_REPLAY_FROM_HIST` rebuilds `SILVER.<table>` from
+  `BRONZE_HIST` by replaying every stored PPN snapshot in ascending order through
+  `SP_LOAD_BRONZE_TO_SILVER` — the same cleanse logic the nightly run uses, so no transform code is
+  duplicated. It is an **operator-run maintenance** entry point, NOT part of the ADF flow: use it
+  after a SILVER transform/hash change (drop + full rebuild — a normal run would only re-apply the
+  latest PPN), after corruption/loss found outside the Time Travel window (HIST is the long-lived
+  truth, and unlike Time Travel it re-derives SILVER with the *current* logic), or for a
+  point-in-time / bounded in-place resume. Order matters — collapsing all history into one MERGE
+  would break FULL delete-detection — so snapshots are replayed one PPN at a time, each applied
+  atomically; the replay is not atomic across PPNs and is safely re-runnable. See the ETL as-built
+  doc §7.3 and `TESTS/test_replay_from_hist.sql`.
 
 ---
 
@@ -159,7 +170,9 @@ status per table for its own alerting.)
 `SP_GATE_CHECK` (now DQ-aware), `SP_FINALIZE_RUN`, `SP_REFRESH_GOLD` (real — refreshes the GOLD
 dynamic tables), the standalone DQ
 set `SP_DQ_EXECUTE` / `SP_DQ_RESULT` / `SP_SEND_NOTIFICATION`, helpers `SP_LOG_STEP` /
-`SP_SET_PROCESS_STATE`, `SP_CLOSE_PPN`. (Loaders + run-control tested on DEV; gate/finalize and the
+`SP_SET_PROCESS_STATE`, `SP_CLOSE_PPN`, and the recovery procedure `SP_REPLAY_FROM_HIST`
+(authored 2026-08-20; DEV validation pending — ships with `TESTS/test_replay_from_hist.sql`).
+(Loaders + run-control tested on DEV; gate/finalize and the
 DQ set newly built. antFarm itself is still stubbed under `PLATFORM_DB.ANTFARM` — see
 `Account Setup/antfarm/`.) GOLD dynamic tables (`DIM_PARTNER`, `FCT_WHOLESALE_USAGE`) + static
 `DIM_DATE`/`DIM_TIME` built under `etl_build/GOLD/`; `CREATE_SCHEMA` now grants `OPERATE` on dynamic
@@ -168,7 +181,8 @@ under `Account Setup/migrations/`), verified on DEV.
 
 **Pending:** real antFarm on SPCS (needs the billed account); the **production GOLD model** across
 the business domains and the `GOLD_{domain}` mart views over it (the refresh mechanism is built and
-demonstrated on the sample WHOLESALE star); `SP_REPLAY_FROM_HIST` (recovery).
+demonstrated on the sample WHOLESALE star); DEV validation of `SP_REPLAY_FROM_HIST` (built, not yet
+executed against the database).
 
 **Retired:** `SP_RUN_DQ_CHECKS` was never built — DQ moved inside `SP_GATE_CHECK` instead, so
 there is one invoker and one judge rather than a separate procedure whose verdict the gate re-read
